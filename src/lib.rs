@@ -3,5 +3,6 @@ pub mod backend;
 pub mod cache;
 pub mod cli;
 pub mod config;
+pub mod gui;
 pub mod output;
 pub mod providers;

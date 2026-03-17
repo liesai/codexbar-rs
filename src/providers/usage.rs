@@ -20,7 +20,7 @@ pub enum ProviderHealth {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceMode {
     #[default]

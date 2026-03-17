@@ -10,6 +10,7 @@ The project currently provides:
 - OpenAI API-backed status probing
 - persisted config and disk cache for status
 - local diagnostics through `doctor`
+- an experimental native GUI shell
 
 ## Current Scope
 
@@ -33,6 +34,26 @@ Current backend entry points are centered around:
 - cache-aware status retrieval
 
 This is intended to make a future Linux GUI reuse the same provider, cache, and doctor logic instead of reimplementing it.
+
+## GUI (Experimental)
+
+A first native GUI shell is available with `egui/eframe`.
+
+Run it with:
+
+```bash
+cargo run --bin codexbar-gui
+```
+
+Current GUI scope:
+
+- provider selector
+- source selector
+- manual refresh
+- `no cache` toggle
+- status cards
+- doctor panel
+- config path display
 
 ## Requirements
 
