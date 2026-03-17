@@ -16,11 +16,9 @@ pub async fn run(cli: Cli) -> Result<JsonResponse> {
         Command::Config { command } => match command {
             ConfigCommand::Path => Ok(success(json!(backend::get_config_path()?))),
         },
-        Command::Doctor { json: _, source } => {
-            Ok(success(json!(backend::get_doctor(backend::BackendDoctorInput {
-                source
-            })?)))
-        }
+        Command::Doctor { json: _, source } => Ok(success(json!(backend::get_doctor(
+            backend::BackendDoctorInput { source }
+        )?))),
         Command::Status {
             json: _,
             provider,
