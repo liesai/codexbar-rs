@@ -91,6 +91,30 @@ cargo run -- status --json --source cli
 
 `auto` currently uses the provider default strategy. `ollama` now has a real CLI-backed collector that reads `ollama ps` and enriches the snapshot with `ollama ls`. `openai --source cli` still reports a degraded snapshot until a real CLI collector is added.
 
+By default, `status` also uses:
+
+- a user config file at `~/.config/codexbar/config.json` (or `$XDG_CONFIG_HOME/codexbar/config.json`)
+- a disk cache at `~/.cache/codexbar/` (or `$XDG_CACHE_HOME/codexbar/`)
+
+Minimal config example:
+
+```json
+{
+  "status": {
+    "default_source": "auto",
+    "cache_ttl_seconds": 30,
+    "cache_enabled": true
+  }
+}
+```
+
+Useful cache controls:
+
+```bash
+cargo run -- status --json --refresh
+cargo run -- status --json --no-cache
+```
+
 The `status` JSON output now exposes a richer usage snapshot for each provider, including `primary`, `health`, `source`, `stale`, and, when available, `prompt_tokens`, `completion_tokens`, and `total_tokens`.
 
 ## Output Format

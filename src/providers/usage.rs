@@ -29,6 +29,16 @@ pub enum SourceMode {
     Cli,
 }
 
+impl SourceMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Api => "api",
+            Self::Cli => "cli",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct StatusRequest {
     pub source_mode: SourceMode,

@@ -44,7 +44,13 @@ pub enum Command {
         #[arg(long)]
         json: bool,
         /// Select the status source strategy.
-        #[arg(long, value_enum, default_value_t = SourceMode::Auto)]
-        source: SourceMode,
+        #[arg(long, value_enum)]
+        source: Option<SourceMode>,
+        /// Bypass any cached status snapshot and force live collection.
+        #[arg(long)]
+        refresh: bool,
+        /// Disable cache reads and writes for this command.
+        #[arg(long)]
+        no_cache: bool,
     },
 }
