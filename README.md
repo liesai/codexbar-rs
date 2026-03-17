@@ -7,7 +7,7 @@ The project currently provides:
 - provider status snapshots through `status`
 - source selection with `auto`, `api`, and `cli`
 - a real CLI-backed `ollama` status collector
-- OpenAI API-backed status probing
+- OpenAI organization usage collection
 - persisted config and disk cache for status
 - local diagnostics through `doctor`
 - an experimental native GUI shell
@@ -60,7 +60,7 @@ Current GUI scope:
 - Rust and Cargo
 - for `ollama` API usage: a reachable Ollama instance, defaulting to `http://127.0.0.1:11434`
 - for `ollama` CLI status collection: a working `ollama` binary in `PATH`
-- for `openai` API usage: `OPENAI_API_KEY`
+- for `openai` organization usage: `OPENAI_ADMIN_KEY` or `OPENAI_API_KEY`
 
 ## Build And Run
 
@@ -158,7 +158,7 @@ cargo run -- doctor --source cli --json
 - cache policy and selected source
 - cache presence and freshness
 - `ollama` CLI availability
-- whether `OPENAI_API_KEY` is set
+- whether OpenAI credentials are set, with an admin-key warning when relevant
 - provider capability summary
 - explicit warning that `openai --source cli` is not implemented
 
@@ -208,11 +208,12 @@ Environment variables:
 
 `openai` supports:
 
-- API-backed status probing
+- API-backed organization usage collection over the last 24 hours
 
 Environment variables:
 
-- `OPENAI_API_KEY`
+- `OPENAI_ADMIN_KEY` (preferred for the organization usage endpoint)
+- `OPENAI_API_KEY` (accepted, but organization usage endpoints may reject non-admin keys)
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
@@ -293,13 +294,11 @@ Example status response:
       },
       "openai": {
         "provider": "openai",
-        "primary": {
-          "used": 0
-        },
+        "primary": {},
         "source": "unknown",
         "health": "missing_credentials",
         "stale": true,
-        "error": "OPENAI_API_KEY is not set"
+        "error": "OPENAI_ADMIN_KEY or OPENAI_API_KEY is not set"
       }
     }
   }

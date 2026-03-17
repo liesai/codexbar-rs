@@ -256,22 +256,29 @@ fn build_ollama_cli_check() -> DoctorCheck {
 }
 
 fn build_openai_api_key_check() -> DoctorCheck {
+    let admin_key_present = std::env::var("OPENAI_ADMIN_KEY")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
     let api_key_present = std::env::var("OPENAI_API_KEY")
         .ok()
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
 
     DoctorCheck {
-        name: "openai_api_key".to_string(),
-        status: if api_key_present {
+        name: "openai_credentials".to_string(),
+        status: if admin_key_present || api_key_present {
             DoctorStatus::Ok
         } else {
             DoctorStatus::Warning
         },
-        message: if api_key_present {
-            "OPENAI_API_KEY is set".to_string()
+        message: if admin_key_present {
+            "OPENAI_ADMIN_KEY is set".to_string()
+        } else if api_key_present {
+            "OPENAI_API_KEY is set; organization usage endpoints may still require an admin-scoped key"
+                .to_string()
         } else {
-            "OPENAI_API_KEY is not set".to_string()
+            "OPENAI_ADMIN_KEY or OPENAI_API_KEY is not set".to_string()
         },
     }
 }

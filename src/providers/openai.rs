@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{
     FetchSource, Provider, ProviderConfig, ProviderHealth, SourceMode, StatusRequest,
@@ -10,13 +11,13 @@ use super::{
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
-const STATUS_PROBE_PROMPT: &str = "status";
+const USAGE_WINDOW_SECONDS: u64 = 24 * 60 * 60;
 
 pub struct OpenAiProvider {
     client: Client,
     base_url: String,
     api_key: Option<String>,
-    model: String,
+    model: Option<String>,
 }
 
 impl OpenAiProvider {
@@ -35,10 +36,13 @@ impl OpenAiProvider {
         let model = config
             .model
             .or_else(|| std::env::var("OPENAI_MODEL").ok())
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| Some(DEFAULT_MODEL.to_string()));
 
-        let api_key = std::env::var("OPENAI_API_KEY")
+        let api_key = std::env::var("OPENAI_ADMIN_KEY")
             .ok()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
 
@@ -51,7 +55,7 @@ impl OpenAiProvider {
     }
 
     fn endpoint(&self) -> String {
-        format!("{}/chat/completions", self.base_url)
+        format!("{}/organization/usage/completions", self.base_url)
     }
 
     fn status_cli(&self) -> UsageSnapshot {
@@ -74,67 +78,58 @@ impl OpenAiProvider {
         if self.api_key.is_none() {
             let mut snapshot = UsageSnapshot::new(
                 self.name(),
-                UsageWindow::new(Some(0), None),
+                UsageWindow::new(None, None),
                 FetchSource::Unknown,
                 ProviderHealth::MissingCredentials,
             );
             snapshot.stale = true;
-            snapshot.error = Some("OPENAI_API_KEY is not set".to_string());
+            snapshot.error = Some("OPENAI_ADMIN_KEY or OPENAI_API_KEY is not set".to_string());
             return Ok(snapshot);
         }
 
-        let response = match self.chat_completion(STATUS_PROBE_PROMPT).await {
-            Ok(value) => value,
-            Err(_) => {
+        match self.fetch_usage_bucket().await {
+            Ok(bucket) => Ok(self.snapshot_from_bucket(bucket)),
+            Err(error) => {
                 let mut snapshot = UsageSnapshot::new(
                     self.name(),
-                    UsageWindow::new(Some(0), None),
+                    UsageWindow::new(None, None),
                     FetchSource::Api,
                     ProviderHealth::Error,
                 );
                 snapshot.stale = true;
-                snapshot.error = Some("failed to fetch usage probe from OpenAI".to_string());
-                return Ok(snapshot);
+                snapshot.error = Some(error.to_string());
+                Ok(snapshot)
             }
-        };
-
-        let usage = response.usage;
-        let total_tokens = resolve_total_tokens(&usage);
-        let mut snapshot = UsageSnapshot::new(
-            self.name(),
-            UsageWindow::new(total_tokens.map(u64::from), None),
-            FetchSource::Api,
-            ProviderHealth::Ok,
-        );
-        snapshot.prompt_tokens = usage.prompt_tokens;
-        snapshot.completion_tokens = usage.completion_tokens;
-        snapshot.total_tokens = total_tokens;
-
-        Ok(snapshot)
+        }
     }
 
-    async fn chat_completion(&self, prompt: &str) -> Result<OpenAiChatCompletionResponse> {
+    async fn fetch_usage_bucket(&self) -> Result<OpenAiUsageBucket> {
         let api_key = match self.api_key.as_deref() {
             Some(value) => value,
-            None => bail!("OPENAI_API_KEY is not set"),
+            None => bail!("OPENAI_ADMIN_KEY or OPENAI_API_KEY is not set"),
         };
 
-        let payload = OpenAiChatCompletionRequest {
-            model: &self.model,
-            messages: [OpenAiChatMessage {
-                role: "user",
-                content: prompt,
-            }],
-        };
+        let now = now_unix_seconds();
+        let start_time = now.saturating_sub(USAGE_WINDOW_SECONDS);
 
-        let response = self
+        let mut request = self
             .client
-            .post(self.endpoint())
+            .get(self.endpoint())
             .bearer_auth(api_key)
-            .json(&payload)
+            .query(&[
+                ("start_time", start_time.to_string()),
+                ("end_time", now.to_string()),
+                ("bucket_width", "1d".to_string()),
+            ]);
+
+        if let Some(model) = &self.model {
+            request = request.query(&[("models[]", model.as_str())]);
+        }
+
+        let response = request
             .send()
             .await
-            .context("failed to send request to openai")?;
+            .context("failed to send request to OpenAI usage API")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -142,51 +137,96 @@ impl OpenAiProvider {
                 .text()
                 .await
                 .unwrap_or_else(|_| String::from("<failed to read error body>"));
-            bail!("openai request failed with status {}: {}", status, body);
+
+            if status.as_u16() == 403 {
+                bail!(
+                    "OpenAI usage API rejected the key (403). An admin-scoped key is required for organization usage endpoints: {}",
+                    body
+                );
+            }
+
+            bail!(
+                "OpenAI usage API request failed with status {}: {}",
+                status,
+                body
+            );
         }
 
-        response
-            .json::<OpenAiChatCompletionResponse>()
+        let payload = response
+            .json::<OpenAiUsageResponse>()
             .await
-            .context("failed to decode openai response JSON")
+            .context("failed to decode OpenAI usage response JSON")?;
+
+        payload
+            .data
+            .into_iter()
+            .max_by_key(|bucket| bucket.end_time)
+            .ok_or_else(|| anyhow::anyhow!("OpenAI usage API returned no usage buckets"))
+    }
+
+    fn snapshot_from_bucket(&self, bucket: OpenAiUsageBucket) -> UsageSnapshot {
+        let prompt_tokens = bucket
+            .results
+            .iter()
+            .filter_map(|result| result.input_tokens)
+            .sum::<u64>();
+        let completion_tokens = bucket
+            .results
+            .iter()
+            .filter_map(|result| result.output_tokens)
+            .sum::<u64>();
+        let total_requests = bucket
+            .results
+            .iter()
+            .filter_map(|result| result.num_model_requests)
+            .sum::<u64>();
+        let total_tokens = prompt_tokens.checked_add(completion_tokens);
+
+        let mut snapshot = UsageSnapshot::new(
+            self.name(),
+            UsageWindow::new(total_tokens, None),
+            FetchSource::Api,
+            ProviderHealth::Ok,
+        );
+
+        snapshot.prompt_tokens = u32::try_from(prompt_tokens).ok();
+        snapshot.completion_tokens = u32::try_from(completion_tokens).ok();
+        snapshot.total_tokens = total_tokens.and_then(|value| u32::try_from(value).ok());
+        snapshot.secondary = Some(UsageWindow::new(Some(total_requests), None));
+        snapshot.updated_at = Some(bucket.end_time.to_string());
+
+        snapshot
     }
 }
 
-#[derive(Debug, Serialize)]
-struct OpenAiChatCompletionRequest<'a> {
-    model: &'a str,
-    messages: [OpenAiChatMessage<'a>; 1],
-}
-
-#[derive(Debug, Serialize)]
-struct OpenAiChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
+#[derive(Debug, Deserialize)]
+struct OpenAiUsageResponse {
+    #[serde(default)]
+    data: Vec<OpenAiUsageBucket>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAiChatCompletionResponse {
+struct OpenAiUsageBucket {
+    end_time: u64,
     #[serde(default)]
-    usage: OpenAiUsage,
+    results: Vec<OpenAiUsageResult>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct OpenAiUsage {
+#[derive(Debug, Deserialize)]
+struct OpenAiUsageResult {
     #[serde(default)]
-    prompt_tokens: Option<u32>,
+    input_tokens: Option<u64>,
     #[serde(default)]
-    completion_tokens: Option<u32>,
+    output_tokens: Option<u64>,
     #[serde(default)]
-    total_tokens: Option<u32>,
+    num_model_requests: Option<u64>,
 }
 
-fn resolve_total_tokens(usage: &OpenAiUsage) -> Option<u32> {
-    usage.total_tokens.or_else(|| {
-        usage
-            .prompt_tokens
-            .zip(usage.completion_tokens)
-            .and_then(|(prompt, completion)| prompt.checked_add(completion))
-    })
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 #[async_trait]
