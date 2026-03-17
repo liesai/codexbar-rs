@@ -141,6 +141,19 @@ cargo run -- doctor --source cli --json
 - provider capability summary
 - explicit warning that `openai --source cli` is not implemented
 
+## Backend Layer
+
+The project now includes a reusable Rust backend layer under [src/backend/mod.rs](/home/marc/codexbar-rs/src/backend/mod.rs) intended to be the future integration point for a Linux GUI.
+
+Current backend entry points:
+
+- `get_status(...)`
+- `get_doctor(...)`
+- `get_config_path()`
+- `get_provider_names()`
+
+The CLI is meant to stay as a thin adapter over this backend instead of being the primary home for product logic.
+
 ## Provider Details
 
 ### Mock
