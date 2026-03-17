@@ -1,91 +1,91 @@
 # codexbar-rs
 
-CLI Rust asynchrone avec sortie JSON et providers interchangeables.
+Asynchronous Rust CLI with JSON output and interchangeable providers.
 
-## Ce que fait le projet
+## What The Project Does
 
-`codexbar-rs` expose une petite interface en ligne de commande pour :
+`codexbar-rs` exposes a small command-line interface to:
 
-- vérifier que l'application répond ;
-- lister les providers disponibles ;
-- exécuter un prompt via un provider donné.
+- verify that the application responds;
+- list available providers;
+- execute a prompt through a selected provider.
 
-La sortie est toujours renvoyée en JSON, y compris en cas d'erreur.
+Output is always returned as JSON, including errors.
 
-## Providers disponibles
+## Available Providers
 
-- `mock` : provider local de démonstration qui simule un appel modèle et renvoie un echo enrichi ;
-- `ollama` : provider HTTP qui appelle une instance Ollama sur `/api/generate`.
-- `openai` : provider HTTP qui appelle l'API OpenAI sur `/chat/completions`.
+- `mock`: local demo provider that simulates a model call and returns an enriched echo;
+- `ollama`: HTTP provider that calls an Ollama instance on `/api/generate`;
+- `openai`: HTTP provider that calls the OpenAI API on `/chat/completions`.
 
-## Prérequis
+## Prerequisites
 
-- Rust / Cargo installés ;
-- pour `ollama`, une instance Ollama accessible, par défaut sur `http://127.0.0.1:11434`.
+- Rust / Cargo installed;
+- for `ollama`, an accessible Ollama instance, defaulting to `http://127.0.0.1:11434`.
 
-## Lancer le projet
+## Run The Project
 
 ```bash
 cargo run -- ping
 ```
 
-## Commandes utiles
+## Useful Commands
 
-Lister les providers :
+List providers:
 
 ```bash
 cargo run -- providers
 ```
 
-Tester le provider `mock` :
+Test the `mock` provider:
 
 ```bash
 cargo run -- run --provider mock --prompt "bonjour le monde"
 ```
 
-Tester le provider `ollama` :
+Test the `ollama` provider:
 
 ```bash
 cargo run -- run --provider ollama --prompt "Explique Rust en une phrase"
 ```
 
-Avec surcharge du modèle ou de l'URL :
+Override the model or base URL:
 
 ```bash
 cargo run -- run --provider ollama --model llama3.2 --base-url http://127.0.0.1:11434 --prompt "Salut"
 ```
 
-## Variables d'environnement
+## Environment Variables
 
-Le provider `ollama` peut aussi être configuré via :
+The `ollama` provider can also be configured with:
 
 - `OLLAMA_MODEL`
 - `OLLAMA_BASE_URL`
 
 ## OpenAI Provider
 
-Pour l'activer :
+To enable it:
 
 ```bash
 export OPENAI_API_KEY=your_api_key
 ```
 
-Variables optionnelles :
+Optional variables:
 
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-Exemple d'usage :
+Usage example:
 
 ```bash
 cargo run -- status --json
 ```
 
-La sortie JSON de `status` inclut maintenant, selon le provider, les champs `prompt_tokens`, `completion_tokens`, `total_tokens` et `source`.
+The `status` JSON output now includes, depending on the provider, the `prompt_tokens`, `completion_tokens`, `total_tokens`, and `source` fields.
 
-## Format de sortie
+## Output Format
 
-Exemple de réponse réussie :
+Example successful response:
 
 ```json
 {
@@ -97,7 +97,7 @@ Exemple de réponse réussie :
 }
 ```
 
-Exemple de statut provider avec champs de tokens :
+Example provider status with token fields:
 
 ```json
 {
@@ -117,7 +117,7 @@ Exemple de statut provider avec champs de tokens :
 }
 ```
 
-Exemple d'erreur :
+Example error response:
 
 ```json
 {
