@@ -1,87 +1,77 @@
 # codexbar-rs
 
-Asynchronous Rust CLI with JSON output and interchangeable providers.
+`codexbar-rs` is an asynchronous Rust CLI that emits JSON for every command and models provider state through a shared status snapshot format.
 
-## What The Project Does
+The project currently supports:
 
-`codexbar-rs` exposes a small command-line interface to:
+- provider discovery
+- prompt execution for `mock`, `ollama`, and `openai`
+- provider status collection through `auto`, `api`, and `cli` source strategies
+- a real CLI-backed collector for `ollama`
+- persisted config for status defaults
+- disk-backed status caching
+- local diagnostics through `doctor`
 
-- verify that the application responds;
-- list available providers;
-- execute a prompt through a selected provider.
+## Current Scope
 
-Output is always returned as JSON, including errors.
+This repository is not a full Linux port of the original CodexBar product yet. It is the core CLI layer that is converging toward that goal:
 
-## Available Providers
+- a richer `status` model
+- explicit source selection
+- local-first collection for Linux-friendly providers
+- config and cache plumbing
+- diagnostics for config, cache, and provider support
 
-- `mock`: local demo provider that simulates a model call and returns an enriched echo;
-- `ollama`: HTTP provider that calls an Ollama instance on `/api/generate`;
-- `openai`: HTTP provider that calls the OpenAI API on `/chat/completions`.
+## Commands
 
-## Prerequisites
-
-- Rust / Cargo installed;
-- for `ollama`, an accessible Ollama instance, defaulting to `http://127.0.0.1:11434`.
-
-## Run The Project
+### Health Check
 
 ```bash
 cargo run -- ping
 ```
 
-## Useful Commands
-
-List providers:
+### List Providers
 
 ```bash
 cargo run -- providers
 ```
 
-Test the `mock` provider:
+### Run a Prompt
+
+Mock:
 
 ```bash
-cargo run -- run --provider mock --prompt "bonjour le monde"
+cargo run -- run --provider mock --prompt "hello world"
 ```
 
-Test the `ollama` provider:
+Ollama:
 
 ```bash
-cargo run -- run --provider ollama --prompt "Explique Rust en une phrase"
+cargo run -- run --provider ollama --prompt "Explain Rust in one sentence"
 ```
 
-Override the model or base URL:
+Ollama with overrides:
 
 ```bash
-cargo run -- run --provider ollama --model llama3.2 --base-url http://127.0.0.1:11434 --prompt "Salut"
+cargo run -- run --provider ollama --model llama3.2 --base-url http://127.0.0.1:11434 --prompt "Hi"
 ```
 
-## Environment Variables
-
-The `ollama` provider can also be configured with:
-
-- `OLLAMA_MODEL`
-- `OLLAMA_BASE_URL`
-
-## OpenAI Provider
-
-To enable it:
+OpenAI:
 
 ```bash
-export OPENAI_API_KEY=your_api_key
+export OPENAI_API_KEY="your_api_key"
+cargo run -- run --provider openai --prompt "Hello"
 ```
 
-Optional variables:
+### Status
 
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL`
-
-Usage example:
+Default status:
 
 ```bash
 cargo run -- status --json
 ```
 
-Select a source strategy explicitly:
+Force a source strategy:
 
 ```bash
 cargo run -- status --json --source auto
@@ -89,59 +79,82 @@ cargo run -- status --json --source api
 cargo run -- status --json --source cli
 ```
 
-`auto` currently uses the provider default strategy. `ollama` now has a real CLI-backed collector that reads `ollama ps` and enriches the snapshot with `ollama ls`. `openai --source cli` still reports a degraded snapshot until a real CLI collector is added.
-
-By default, `status` also uses:
-
-- a user config file at `~/.config/codexbar/config.json` (or `$XDG_CONFIG_HOME/codexbar/config.json`)
-- a disk cache at `~/.cache/codexbar/` (or `$XDG_CACHE_HOME/codexbar/`)
-
-Minimal config example:
-
-```json
-{
-  "status": {
-    "default_source": "auto",
-    "cache_ttl_seconds": 30,
-    "cache_enabled": true
-  }
-}
-```
-
-Useful cache controls:
+Cache controls:
 
 ```bash
 cargo run -- status --json --refresh
 cargo run -- status --json --no-cache
 ```
 
-Diagnostics:
+### Config and Diagnostics
+
+Resolved config path:
 
 ```bash
 cargo run -- config path
+```
+
+Diagnostics:
+
+```bash
 cargo run -- doctor --json
 cargo run -- doctor --source cli --json
 ```
 
-`doctor` reports resolved config/cache paths, cache state, `ollama` CLI availability, and the effective support level of each provider source.
+## Providers
 
-The `status` JSON output now exposes a richer usage snapshot for each provider, including `primary`, `health`, `source`, `stale`, and, when available, `prompt_tokens`, `completion_tokens`, and `total_tokens`.
+### mock
 
-## Output Format
+- local demo provider
+- supports prompt execution
+- reports local mock status snapshots
 
-Example successful response:
+### ollama
 
-```json
-{
-  "ok": true,
-  "data": {
-    "output": "[model=mock-v1] tokens=3 echo=bonjour le monde",
-    "provider": "mock"
-  }
-}
-```
+- supports prompt execution through the Ollama HTTP API
+- supports `status --source api`
+- supports `status --source cli` through `ollama ps`
+- enriches CLI status with installed model count from `ollama ls`
+- `status --source auto` prefers the CLI collector, then falls back to API
 
-Example provider status with usage snapshot fields:
+### openai
+
+- supports prompt execution through the OpenAI API
+- supports `status --source api`
+- supports `status --source auto`, which currently routes to the API path
+- parses `prompt_tokens`, `completion_tokens`, and `total_tokens`
+- does not yet have a real `status --source cli` collector
+
+## Source Strategy Behavior
+
+The `status` command supports three source modes:
+
+- `auto`: use the provider default strategy
+- `api`: force API-backed collection
+- `cli`: force CLI-backed collection
+
+Current behavior by provider:
+
+- `mock`: local behavior only
+- `ollama`: `auto` prefers CLI, `api` uses HTTP, `cli` uses the real local collector
+- `openai`: `api` is real, `auto` routes to API, `cli` returns a degraded snapshot because no stable local CLI collector is implemented yet
+
+## Status Snapshot Model
+
+Each provider returns a JSON status snapshot with fields such as:
+
+- `provider`
+- `primary`
+- `secondary`
+- `source`
+- `health`
+- `stale`
+- `error`
+- `prompt_tokens`
+- `completion_tokens`
+- `total_tokens`
+
+Example:
 
 ```json
 {
@@ -173,7 +186,83 @@ Example provider status with usage snapshot fields:
 }
 ```
 
-Example error response:
+## Configuration
+
+Status behavior can be configured through a JSON file at:
+
+- `~/.config/codexbar/config.json`
+- or `$XDG_CONFIG_HOME/codexbar/config.json`
+
+Minimal example:
+
+```json
+{
+  "status": {
+    "default_source": "auto",
+    "cache_ttl_seconds": 30,
+    "cache_enabled": true
+  }
+}
+```
+
+If the config file is missing or invalid, the CLI falls back to safe defaults.
+
+## Cache
+
+Status snapshots are cached on disk by source mode at:
+
+- `~/.cache/codexbar/`
+- or `$XDG_CACHE_HOME/codexbar/`
+
+Examples:
+
+- `status-cache-auto.json`
+- `status-cache-api.json`
+- `status-cache-cli.json`
+
+The cache is used only for `status`, not for `run`.
+
+Behavior:
+
+- if cache is enabled and fresh, `status` can return cached data
+- `--refresh` bypasses cache reads and forces live collection
+- `--no-cache` disables cache reads and writes
+- if live collection fails and cached data exists, cached snapshots can be returned as stale fallback data
+
+## Diagnostics
+
+`doctor` reports the local runtime state without performing heavy provider collection.
+
+It currently checks:
+
+- resolved config path
+- config presence
+- cache path
+- cache freshness for the selected source
+- cache policy
+- `ollama` CLI availability
+- presence of `OPENAI_API_KEY`
+- provider capability summary
+- explicit warning for `openai --source cli`
+
+## Environment Variables
+
+### Ollama
+
+- `OLLAMA_MODEL`
+- `OLLAMA_BASE_URL`
+
+### OpenAI
+
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
+- `OPENAI_MODEL`
+
+## Error Output
+
+All failures are returned as JSON.
+
+Example:
 
 ```json
 {
