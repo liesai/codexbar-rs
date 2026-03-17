@@ -81,7 +81,7 @@ Usage example:
 cargo run -- status --json
 ```
 
-The `status` JSON output now includes, depending on the provider, the `prompt_tokens`, `completion_tokens`, `total_tokens`, and `source` fields.
+The `status` JSON output now exposes a richer usage snapshot for each provider, including `primary`, `health`, `source`, `stale`, and, when available, `prompt_tokens`, `completion_tokens`, and `total_tokens`.
 
 ## Output Format
 
@@ -97,7 +97,7 @@ Example successful response:
 }
 ```
 
-Example provider status with token fields:
+Example provider status with usage snapshot fields:
 
 ```json
 {
@@ -105,12 +105,14 @@ Example provider status with token fields:
   "data": {
     "providers": {
       "openai": {
-        "used": 42,
-        "limit": 0,
-        "prompt_tokens": 12,
-        "completion_tokens": 30,
-        "total_tokens": 42,
-        "source": "openai/chat_completions"
+        "error": "OPENAI_API_KEY is not set",
+        "health": "missing_credentials",
+        "provider": "openai",
+        "primary": {
+          "used": 0
+        },
+        "source": "unknown",
+        "stale": true
       }
     }
   }

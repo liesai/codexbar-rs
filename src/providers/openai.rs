@@ -3,7 +3,10 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::{Provider, ProviderConfig, ProviderRequest, ProviderResponse, ProviderUsage};
+use super::{
+    FetchSource, Provider, ProviderConfig, ProviderHealth, ProviderRequest, ProviderResponse,
+    UsageSnapshot, UsageWindow,
+};
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -165,42 +168,46 @@ impl Provider for OpenAiProvider {
         })
     }
 
-    async fn status(&self) -> Result<ProviderUsage> {
+    async fn status(&self) -> Result<UsageSnapshot> {
         if self.api_key.is_none() {
-            return Ok(ProviderUsage {
-                used: 0,
-                limit: 0,
-                prompt_tokens: None,
-                completion_tokens: None,
-                total_tokens: None,
-                source: Some("openai/status:missing_api_key".to_string()),
-            });
+            let mut snapshot = UsageSnapshot::new(
+                self.name(),
+                UsageWindow::new(Some(0), None),
+                FetchSource::Unknown,
+                ProviderHealth::MissingCredentials,
+            );
+            snapshot.stale = true;
+            snapshot.error = Some("OPENAI_API_KEY is not set".to_string());
+            return Ok(snapshot);
         }
 
         let response = match self.chat_completion(STATUS_PROBE_PROMPT).await {
             Ok(value) => value,
             Err(_) => {
-                return Ok(ProviderUsage {
-                    used: 0,
-                    limit: 0,
-                    prompt_tokens: None,
-                    completion_tokens: None,
-                    total_tokens: None,
-                    source: Some("openai/status:error".to_string()),
-                });
+                let mut snapshot = UsageSnapshot::new(
+                    self.name(),
+                    UsageWindow::new(Some(0), None),
+                    FetchSource::Api,
+                    ProviderHealth::Error,
+                );
+                snapshot.stale = true;
+                snapshot.error = Some("failed to fetch usage probe from OpenAI".to_string());
+                return Ok(snapshot);
             }
         };
 
         let usage = response.usage;
         let total_tokens = resolve_total_tokens(&usage);
+        let mut snapshot = UsageSnapshot::new(
+            self.name(),
+            UsageWindow::new(total_tokens.map(u64::from), None),
+            FetchSource::Api,
+            ProviderHealth::Ok,
+        );
+        snapshot.prompt_tokens = usage.prompt_tokens;
+        snapshot.completion_tokens = usage.completion_tokens;
+        snapshot.total_tokens = total_tokens;
 
-        Ok(ProviderUsage {
-            used: u64::from(total_tokens.unwrap_or(0)),
-            limit: 0,
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            total_tokens,
-            source: Some("openai/chat_completions".to_string()),
-        })
+        Ok(snapshot)
     }
 }

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use std::collections::BTreeMap;
 
-use super::{ProviderConfig, ProviderUsage, create_provider, provider_names};
+use super::{ProviderConfig, UsageSnapshot, create_provider, provider_names};
 
-pub async fn fetch_usage() -> Result<BTreeMap<String, ProviderUsage>> {
+pub async fn fetch_usage() -> Result<BTreeMap<String, UsageSnapshot>> {
     let mut usage_map = BTreeMap::new();
 
     for &name in provider_names() {

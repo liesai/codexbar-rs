@@ -2,6 +2,7 @@ mod mock;
 mod ollama;
 mod openai;
 pub mod status;
+mod usage;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ use std::borrow::Cow;
 use self::mock::MockProvider;
 use self::ollama::OllamaProvider;
 use self::openai::OpenAiProvider;
+pub use self::usage::{FetchSource, ProviderHealth, UsageSnapshot, UsageWindow};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRequest {
@@ -23,16 +25,6 @@ pub struct ProviderResponse {
     pub output: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderUsage {
-    pub used: u64,
-    pub limit: u64,
-    pub prompt_tokens: Option<u32>,
-    pub completion_tokens: Option<u32>,
-    pub total_tokens: Option<u32>,
-    pub source: Option<String>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub model: Option<String>,
@@ -43,7 +35,7 @@ pub struct ProviderConfig {
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     async fn generate(&self, request: ProviderRequest) -> Result<ProviderResponse>;
-    async fn status(&self) -> Result<ProviderUsage>;
+    async fn status(&self) -> Result<UsageSnapshot>;
 }
 
 pub fn provider_names() -> &'static [&'static str] {

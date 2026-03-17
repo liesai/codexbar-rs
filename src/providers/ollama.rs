@@ -4,7 +4,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
-use super::{Provider, ProviderConfig, ProviderRequest, ProviderResponse, ProviderUsage};
+use super::{
+    FetchSource, Provider, ProviderConfig, ProviderHealth, ProviderRequest, ProviderResponse,
+    UsageSnapshot, UsageWindow,
+};
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
 const DEFAULT_MODEL: &str = "llama3.2";
@@ -123,43 +126,57 @@ impl Provider for OllamaProvider {
         })
     }
 
-    async fn status(&self) -> Result<ProviderUsage> {
-        let default_usage = ProviderUsage {
-            used: STATUS_FALLBACK_USED,
-            limit: STATUS_FALLBACK_LIMIT,
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-            source: Some("ollama/status:fallback".to_string()),
-        };
+    async fn status(&self) -> Result<UsageSnapshot> {
+        let default_window =
+            UsageWindow::new(Some(STATUS_FALLBACK_USED), Some(STATUS_FALLBACK_LIMIT));
         let status_url = format!("{}/api/status", self.base_url);
 
         let response = match self.client.get(&status_url).send().await {
             Ok(resp) if resp.status().is_success() => resp,
-            _ => return Ok(default_usage),
+            _ => {
+                let mut snapshot = UsageSnapshot::new(
+                    self.name(),
+                    default_window,
+                    FetchSource::Api,
+                    ProviderHealth::Degraded,
+                );
+                snapshot.stale = true;
+                snapshot.error =
+                    Some("failed to fetch ollama status; using fallback values".to_string());
+                return Ok(snapshot);
+            }
         };
 
         let status_body = match response.json::<OllamaStatusResponse>().await {
             Ok(body) => body,
-            Err(_) => return Ok(default_usage),
+            Err(_) => {
+                let mut snapshot = UsageSnapshot::new(
+                    self.name(),
+                    default_window,
+                    FetchSource::Api,
+                    ProviderHealth::Degraded,
+                );
+                snapshot.stale = true;
+                snapshot.error =
+                    Some("failed to decode ollama status; using fallback values".to_string());
+                return Ok(snapshot);
+            }
         };
 
         let usage = status_body.usage;
         let used = max(usage.current, usage.used);
-        let used = if used > 0 { used } else { default_usage.used };
+        let used = if used > 0 { used } else { STATUS_FALLBACK_USED };
         let limit = if usage.limit > 0 {
             usage.limit
         } else {
-            default_usage.limit
+            STATUS_FALLBACK_LIMIT
         };
 
-        Ok(ProviderUsage {
-            used,
-            limit,
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-            source: Some("ollama/status".to_string()),
-        })
+        Ok(UsageSnapshot::new(
+            self.name(),
+            UsageWindow::new(Some(used), Some(limit)),
+            FetchSource::Api,
+            ProviderHealth::Ok,
+        ))
     }
 }

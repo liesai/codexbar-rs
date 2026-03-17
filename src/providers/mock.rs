@@ -2,7 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::time::{Duration, sleep};
 
-use super::{Provider, ProviderConfig, ProviderRequest, ProviderResponse, ProviderUsage};
+use super::{
+    FetchSource, Provider, ProviderConfig, ProviderHealth, ProviderRequest, ProviderResponse,
+    UsageSnapshot, UsageWindow,
+};
 
 const DEFAULT_MODEL: &str = "mock-v1";
 const DEFAULT_USAGE_USED: u64 = 5;
@@ -42,14 +45,12 @@ impl Provider for MockProvider {
         })
     }
 
-    async fn status(&self) -> Result<ProviderUsage> {
-        Ok(ProviderUsage {
-            used: DEFAULT_USAGE_USED,
-            limit: DEFAULT_USAGE_LIMIT,
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-            source: Some("mock".to_string()),
-        })
+    async fn status(&self) -> Result<UsageSnapshot> {
+        Ok(UsageSnapshot::new(
+            self.name(),
+            UsageWindow::new(Some(DEFAULT_USAGE_USED), Some(DEFAULT_USAGE_LIMIT)),
+            FetchSource::Mock,
+            ProviderHealth::Ok,
+        ))
     }
 }
