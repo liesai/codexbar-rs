@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+use crate::providers::SourceMode;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "codexbar-rs",
@@ -41,5 +43,8 @@ pub enum Command {
         /// Serialize the status map as JSON.
         #[arg(long)]
         json: bool,
+        /// Select the status source strategy.
+        #[arg(long, value_enum, default_value_t = SourceMode::Auto)]
+        source: SourceMode,
     },
 }

@@ -4,7 +4,7 @@ use tokio::time::{Duration, sleep};
 
 use super::{
     FetchSource, Provider, ProviderConfig, ProviderHealth, ProviderRequest, ProviderResponse,
-    UsageSnapshot, UsageWindow,
+    SourceMode, StatusRequest, UsageSnapshot, UsageWindow,
 };
 
 const DEFAULT_MODEL: &str = "mock-v1";
@@ -20,6 +20,27 @@ impl MockProvider {
         Self {
             model: config.model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
         }
+    }
+
+    fn status_auto(&self) -> UsageSnapshot {
+        self.status_mock()
+    }
+
+    fn status_api(&self) -> UsageSnapshot {
+        self.status_mock()
+    }
+
+    fn status_cli(&self) -> UsageSnapshot {
+        self.status_mock()
+    }
+
+    fn status_mock(&self) -> UsageSnapshot {
+        UsageSnapshot::new(
+            self.name(),
+            UsageWindow::new(Some(DEFAULT_USAGE_USED), Some(DEFAULT_USAGE_LIMIT)),
+            FetchSource::Mock,
+            ProviderHealth::Ok,
+        )
     }
 }
 
@@ -45,12 +66,13 @@ impl Provider for MockProvider {
         })
     }
 
-    async fn status(&self) -> Result<UsageSnapshot> {
-        Ok(UsageSnapshot::new(
-            self.name(),
-            UsageWindow::new(Some(DEFAULT_USAGE_USED), Some(DEFAULT_USAGE_LIMIT)),
-            FetchSource::Mock,
-            ProviderHealth::Ok,
-        ))
+    async fn status(&self, request: StatusRequest) -> Result<UsageSnapshot> {
+        let snapshot = match request.source_mode {
+            SourceMode::Auto => self.status_auto(),
+            SourceMode::Api => self.status_api(),
+            SourceMode::Cli => self.status_cli(),
+        };
+
+        Ok(snapshot)
     }
 }

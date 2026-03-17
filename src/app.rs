@@ -1,7 +1,9 @@
 use crate::cli::{Cli, Command};
 use crate::output::{JsonResponse, success};
 use crate::providers::status::fetch_usage as fetch_provider_usage;
-use crate::providers::{ProviderConfig, ProviderRequest, create_provider, provider_names};
+use crate::providers::{
+    ProviderConfig, ProviderRequest, StatusRequest, create_provider, provider_names,
+};
 use anyhow::Result;
 use serde_json::json;
 
@@ -28,8 +30,11 @@ pub async fn run(cli: Cli) -> Result<JsonResponse> {
                 "output": response.output
             })))
         }
-        Command::Status { json: _ } => {
-            let usage = fetch_provider_usage().await?;
+        Command::Status { json: _, source } => {
+            let usage = fetch_provider_usage(StatusRequest {
+                source_mode: source,
+            })
+            .await?;
             Ok(success(json!({
                 "providers": usage
             })))

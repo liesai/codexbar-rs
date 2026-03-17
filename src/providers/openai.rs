@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     FetchSource, Provider, ProviderConfig, ProviderHealth, ProviderRequest, ProviderResponse,
-    UsageSnapshot, UsageWindow,
+    SourceMode, StatusRequest, UsageSnapshot, UsageWindow,
 };
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -52,6 +52,65 @@ impl OpenAiProvider {
 
     fn endpoint(&self) -> String {
         format!("{}/chat/completions", self.base_url)
+    }
+
+    fn status_cli(&self) -> UsageSnapshot {
+        let mut snapshot = UsageSnapshot::new(
+            self.name(),
+            UsageWindow::new(None, None),
+            FetchSource::Cli,
+            ProviderHealth::Degraded,
+        );
+        snapshot.stale = true;
+        snapshot.error = Some("openai CLI status strategy is not implemented".to_string());
+        snapshot
+    }
+
+    async fn status_auto(&self) -> Result<UsageSnapshot> {
+        self.status_api().await
+    }
+
+    async fn status_api(&self) -> Result<UsageSnapshot> {
+        if self.api_key.is_none() {
+            let mut snapshot = UsageSnapshot::new(
+                self.name(),
+                UsageWindow::new(Some(0), None),
+                FetchSource::Unknown,
+                ProviderHealth::MissingCredentials,
+            );
+            snapshot.stale = true;
+            snapshot.error = Some("OPENAI_API_KEY is not set".to_string());
+            return Ok(snapshot);
+        }
+
+        let response = match self.chat_completion(STATUS_PROBE_PROMPT).await {
+            Ok(value) => value,
+            Err(_) => {
+                let mut snapshot = UsageSnapshot::new(
+                    self.name(),
+                    UsageWindow::new(Some(0), None),
+                    FetchSource::Api,
+                    ProviderHealth::Error,
+                );
+                snapshot.stale = true;
+                snapshot.error = Some("failed to fetch usage probe from OpenAI".to_string());
+                return Ok(snapshot);
+            }
+        };
+
+        let usage = response.usage;
+        let total_tokens = resolve_total_tokens(&usage);
+        let mut snapshot = UsageSnapshot::new(
+            self.name(),
+            UsageWindow::new(total_tokens.map(u64::from), None),
+            FetchSource::Api,
+            ProviderHealth::Ok,
+        );
+        snapshot.prompt_tokens = usage.prompt_tokens;
+        snapshot.completion_tokens = usage.completion_tokens;
+        snapshot.total_tokens = total_tokens;
+
+        Ok(snapshot)
     }
 
     async fn chat_completion(&self, prompt: &str) -> Result<OpenAiChatCompletionResponse> {
@@ -168,46 +227,11 @@ impl Provider for OpenAiProvider {
         })
     }
 
-    async fn status(&self) -> Result<UsageSnapshot> {
-        if self.api_key.is_none() {
-            let mut snapshot = UsageSnapshot::new(
-                self.name(),
-                UsageWindow::new(Some(0), None),
-                FetchSource::Unknown,
-                ProviderHealth::MissingCredentials,
-            );
-            snapshot.stale = true;
-            snapshot.error = Some("OPENAI_API_KEY is not set".to_string());
-            return Ok(snapshot);
+    async fn status(&self, request: StatusRequest) -> Result<UsageSnapshot> {
+        match request.source_mode {
+            SourceMode::Auto => self.status_auto().await,
+            SourceMode::Api => self.status_api().await,
+            SourceMode::Cli => Ok(self.status_cli()),
         }
-
-        let response = match self.chat_completion(STATUS_PROBE_PROMPT).await {
-            Ok(value) => value,
-            Err(_) => {
-                let mut snapshot = UsageSnapshot::new(
-                    self.name(),
-                    UsageWindow::new(Some(0), None),
-                    FetchSource::Api,
-                    ProviderHealth::Error,
-                );
-                snapshot.stale = true;
-                snapshot.error = Some("failed to fetch usage probe from OpenAI".to_string());
-                return Ok(snapshot);
-            }
-        };
-
-        let usage = response.usage;
-        let total_tokens = resolve_total_tokens(&usage);
-        let mut snapshot = UsageSnapshot::new(
-            self.name(),
-            UsageWindow::new(total_tokens.map(u64::from), None),
-            FetchSource::Api,
-            ProviderHealth::Ok,
-        );
-        snapshot.prompt_tokens = usage.prompt_tokens;
-        snapshot.completion_tokens = usage.completion_tokens;
-        snapshot.total_tokens = total_tokens;
-
-        Ok(snapshot)
     }
 }

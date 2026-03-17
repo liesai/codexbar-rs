@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +18,20 @@ pub enum ProviderHealth {
     Degraded,
     MissingCredentials,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceMode {
+    #[default]
+    Auto,
+    Api,
+    Cli,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct StatusRequest {
+    pub source_mode: SourceMode,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

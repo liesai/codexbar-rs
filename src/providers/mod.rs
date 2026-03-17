@@ -12,7 +12,9 @@ use std::borrow::Cow;
 use self::mock::MockProvider;
 use self::ollama::OllamaProvider;
 use self::openai::OpenAiProvider;
-pub use self::usage::{FetchSource, ProviderHealth, UsageSnapshot, UsageWindow};
+pub use self::usage::{
+    FetchSource, ProviderHealth, SourceMode, StatusRequest, UsageSnapshot, UsageWindow,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRequest {
@@ -35,7 +37,7 @@ pub struct ProviderConfig {
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     async fn generate(&self, request: ProviderRequest) -> Result<ProviderResponse>;
-    async fn status(&self) -> Result<UsageSnapshot>;
+    async fn status(&self, request: StatusRequest) -> Result<UsageSnapshot>;
 }
 
 pub fn provider_names() -> &'static [&'static str] {

@@ -81,6 +81,16 @@ Usage example:
 cargo run -- status --json
 ```
 
+Select a source strategy explicitly:
+
+```bash
+cargo run -- status --json --source auto
+cargo run -- status --json --source api
+cargo run -- status --json --source cli
+```
+
+`auto` currently uses the provider default strategy. `cli` is implemented as an explicit strategy entry point, but `ollama` and `openai` still report a degraded snapshot until a real CLI-backed collector is added.
+
 The `status` JSON output now exposes a richer usage snapshot for each provider, including `primary`, `health`, `source`, `stale`, and, when available, `prompt_tokens`, `completion_tokens`, and `total_tokens`.
 
 ## Output Format
