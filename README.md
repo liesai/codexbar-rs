@@ -149,7 +149,6 @@ With `--source auto`, `ollama` tries the CLI collector first and falls back to A
 
 Environment variables:
 
-- `OLLAMA_MODEL`
 - `OLLAMA_BASE_URL`
 
 ### OpenAI
