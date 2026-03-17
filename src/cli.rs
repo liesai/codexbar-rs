@@ -42,6 +42,9 @@ pub enum Command {
         /// Serialize the status map as JSON.
         #[arg(long)]
         json: bool,
+        /// Restrict status collection to a single provider.
+        #[arg(long)]
+        provider: Option<String>,
         /// Select the status source strategy.
         #[arg(long, value_enum)]
         source: Option<SourceMode>,

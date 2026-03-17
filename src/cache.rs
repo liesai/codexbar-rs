@@ -11,14 +11,20 @@ const APP_DIR: &str = "codexbar";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusCacheRecord {
     pub source_mode: SourceMode,
+    pub provider_filter: Option<String>,
     pub cached_at_unix: u64,
     pub providers: BTreeMap<String, UsageSnapshot>,
 }
 
 impl StatusCacheRecord {
-    pub fn new(source_mode: SourceMode, providers: BTreeMap<String, UsageSnapshot>) -> Self {
+    pub fn new(
+        source_mode: SourceMode,
+        provider_filter: Option<String>,
+        providers: BTreeMap<String, UsageSnapshot>,
+    ) -> Self {
         Self {
             source_mode,
+            provider_filter,
             cached_at_unix: now_unix_seconds(),
             providers,
         }
@@ -30,8 +36,11 @@ impl StatusCacheRecord {
     }
 }
 
-pub fn load_status_cache(source_mode: SourceMode) -> Result<Option<StatusCacheRecord>> {
-    let path = cache_path(source_mode);
+pub fn load_status_cache(
+    source_mode: SourceMode,
+    provider_filter: Option<&str>,
+) -> Result<Option<StatusCacheRecord>> {
+    let path = cache_path(source_mode, provider_filter);
     if !path.exists() {
         return Ok(None);
     }
@@ -44,12 +53,12 @@ pub fn load_status_cache(source_mode: SourceMode) -> Result<Option<StatusCacheRe
     Ok(Some(record))
 }
 
-pub fn cache_path_for(source_mode: SourceMode) -> PathBuf {
-    cache_path(source_mode)
+pub fn cache_path_for(source_mode: SourceMode, provider_filter: Option<&str>) -> PathBuf {
+    cache_path(source_mode, provider_filter)
 }
 
 pub fn save_status_cache(record: &StatusCacheRecord) -> Result<()> {
-    let path = cache_path(record.source_mode);
+    let path = cache_path(record.source_mode, record.provider_filter.as_deref());
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create cache directory {}", parent.display()))?;
@@ -81,8 +90,11 @@ pub fn stale_cached_providers(
         .collect()
 }
 
-fn cache_path(source_mode: SourceMode) -> PathBuf {
-    let file_name = format!("status-cache-{}.json", source_mode.as_str());
+fn cache_path(source_mode: SourceMode, provider_filter: Option<&str>) -> PathBuf {
+    let file_name = match provider_filter {
+        Some(provider) => format!("status-cache-{}-{}.json", source_mode.as_str(), provider),
+        None => format!("status-cache-{}.json", source_mode.as_str()),
+    };
 
     if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
         return PathBuf::from(xdg).join(APP_DIR).join(file_name);

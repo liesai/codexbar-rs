@@ -34,6 +34,7 @@ pub async fn run(cli: Cli) -> Result<JsonResponse> {
         }
         Command::Status {
             json: _,
+            provider,
             source,
             refresh,
             no_cache,
@@ -42,12 +43,15 @@ pub async fn run(cli: Cli) -> Result<JsonResponse> {
             let effective_source = source.unwrap_or(app_config.status.default_source);
             let request = StatusRequest {
                 source_mode: effective_source,
+                provider,
             };
             let cache_enabled = app_config.status.cache_enabled && !no_cache;
             let ttl_seconds = app_config.status.cache_ttl_seconds;
 
             let cached_record = if cache_enabled {
-                cache::load_status_cache(effective_source).ok().flatten()
+                cache::load_status_cache(effective_source, request.provider.as_deref())
+                    .ok()
+                    .flatten()
             } else {
                 None
             };
@@ -73,10 +77,14 @@ async fn fetch_live_status(
     cache_enabled: bool,
     cached_record: Option<cache::StatusCacheRecord>,
 ) -> Result<std::collections::BTreeMap<String, crate::providers::UsageSnapshot>> {
-    match fetch_provider_usage(request).await {
+    match fetch_provider_usage(request.clone()).await {
         Ok(usage) => {
             if cache_enabled {
-                let record = cache::StatusCacheRecord::new(request.source_mode, usage.clone());
+                let record = cache::StatusCacheRecord::new(
+                    request.source_mode,
+                    request.provider.clone(),
+                    usage.clone(),
+                );
                 let _ = cache::save_status_cache(&record);
             }
             Ok(usage)
@@ -123,9 +131,9 @@ fn build_doctor_report(
     source_mode: SourceMode,
     app_config: &crate::config::AppConfig,
 ) -> DoctorReport {
-    let cache_path = cache::cache_path_for(source_mode);
+    let cache_path = cache::cache_path_for(source_mode, None);
     let config_path = config_path();
-    let cache_record = cache::load_status_cache(source_mode).ok().flatten();
+    let cache_record = cache::load_status_cache(source_mode, None).ok().flatten();
     let mut checks = vec![
         DoctorCheck {
             name: "config_path".to_string(),

@@ -63,6 +63,12 @@ Collect provider status snapshots.
 cargo run -- status --json
 ```
 
+Restrict status collection to a single provider:
+
+```bash
+cargo run -- status --json --provider ollama
+```
+
 Source selection:
 
 ```bash
@@ -205,6 +211,8 @@ One cache file is created per source mode:
 - `status-cache-auto.json`
 - `status-cache-api.json`
 - `status-cache-cli.json`
+
+When `--provider <name>` is used, a provider-specific cache file is used for that request.
 
 Cache behavior:
 
