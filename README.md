@@ -21,6 +21,19 @@ This repository is not a full Linux port of the upstream macOS product yet. At t
 - source routing and fallback behavior
 - local observability and diagnostics
 
+## Architecture
+
+The CLI is now a thin façade over a reusable backend layer.
+
+Current backend entry points are centered around:
+
+- status collection
+- diagnostics
+- config path resolution
+- cache-aware status retrieval
+
+This is intended to make a future Linux GUI reuse the same provider, cache, and doctor logic instead of reimplementing it.
+
 ## Requirements
 
 - Rust and Cargo

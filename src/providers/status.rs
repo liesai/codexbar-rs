@@ -8,7 +8,10 @@ pub async fn fetch_usage(request: StatusRequest) -> Result<BTreeMap<String, Usag
 
     let names: Vec<String> = match request.provider.clone() {
         Some(name) => vec![name],
-        None => provider_names().iter().map(|name| (*name).to_string()).collect(),
+        None => provider_names()
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect(),
     };
 
     for name in names {
