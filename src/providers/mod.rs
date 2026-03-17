@@ -16,17 +16,6 @@ pub use self::usage::{
     FetchSource, ProviderHealth, SourceMode, StatusRequest, UsageSnapshot, UsageWindow,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderRequest {
-    pub prompt: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderResponse {
-    pub provider: String,
-    pub output: String,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub model: Option<String>,
@@ -36,7 +25,6 @@ pub struct ProviderConfig {
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
-    async fn generate(&self, request: ProviderRequest) -> Result<ProviderResponse>;
     async fn status(&self, request: StatusRequest) -> Result<UsageSnapshot>;
 }
 

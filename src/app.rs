@@ -3,9 +3,7 @@ use crate::cli::{Cli, Command, ConfigCommand};
 use crate::config::{config_exists, config_path, load_config};
 use crate::output::{JsonResponse, success};
 use crate::providers::status::fetch_usage as fetch_provider_usage;
-use crate::providers::{
-    ProviderConfig, ProviderRequest, SourceMode, StatusRequest, create_provider, provider_names,
-};
+use crate::providers::{SourceMode, StatusRequest, provider_names};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::json;
@@ -33,20 +31,6 @@ pub async fn run(cli: Cli) -> Result<JsonResponse> {
                 effective_source,
                 &app_config
             ))))
-        }
-        Command::Run {
-            provider,
-            prompt,
-            model,
-            base_url,
-        } => {
-            let provider_impl = create_provider(&provider, ProviderConfig { model, base_url })?;
-            let response = provider_impl.generate(ProviderRequest { prompt }).await?;
-
-            Ok(success(json!({
-                "provider": response.provider,
-                "output": response.output
-            })))
         }
         Command::Status {
             json: _,

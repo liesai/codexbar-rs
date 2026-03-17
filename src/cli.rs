@@ -21,21 +21,6 @@ pub enum Command {
         #[arg(long, default_value = "ok")]
         message: String,
     },
-    /// Execute a prompt using a named provider.
-    Run {
-        /// Provider key, for example: mock, ollama.
-        #[arg(long)]
-        provider: String,
-        /// Prompt text passed to the provider.
-        #[arg(long)]
-        prompt: String,
-        /// Optional model override (used by providers that support it, e.g. ollama).
-        #[arg(long)]
-        model: Option<String>,
-        /// Optional provider base URL (used by providers that support it, e.g. ollama).
-        #[arg(long)]
-        base_url: Option<String>,
-    },
     /// List available providers.
     Providers,
     /// Inspect resolved configuration paths.

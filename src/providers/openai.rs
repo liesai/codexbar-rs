@@ -4,8 +4,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    FetchSource, Provider, ProviderConfig, ProviderHealth, ProviderRequest, ProviderResponse,
-    SourceMode, StatusRequest, UsageSnapshot, UsageWindow,
+    FetchSource, Provider, ProviderConfig, ProviderHealth, SourceMode, StatusRequest,
+    UsageSnapshot, UsageWindow,
 };
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -167,20 +167,7 @@ struct OpenAiChatMessage<'a> {
 #[derive(Debug, Deserialize)]
 struct OpenAiChatCompletionResponse {
     #[serde(default)]
-    choices: Vec<OpenAiChoice>,
-    #[serde(default)]
     usage: OpenAiUsage,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiChoice {
-    message: OpenAiMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiMessage {
-    #[serde(default)]
-    content: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -206,25 +193,6 @@ fn resolve_total_tokens(usage: &OpenAiUsage) -> Option<u32> {
 impl Provider for OpenAiProvider {
     fn name(&self) -> &'static str {
         "openai"
-    }
-
-    async fn generate(&self, request: ProviderRequest) -> Result<ProviderResponse> {
-        let body = self.chat_completion(&request.prompt).await?;
-        let output = body
-            .choices
-            .into_iter()
-            .next()
-            .map(|choice| choice.message.content)
-            .unwrap_or_default();
-
-        if output.trim().is_empty() {
-            bail!("openai response did not include content");
-        }
-
-        Ok(ProviderResponse {
-            provider: self.name().to_string(),
-            output,
-        })
     }
 
     async fn status(&self, request: StatusRequest) -> Result<UsageSnapshot> {
