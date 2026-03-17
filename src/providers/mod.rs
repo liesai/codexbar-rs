@@ -1,5 +1,6 @@
 mod mock;
 mod ollama;
+mod openai;
 pub mod status;
 
 use anyhow::{Result, bail};
@@ -9,6 +10,7 @@ use std::borrow::Cow;
 
 use self::mock::MockProvider;
 use self::ollama::OllamaProvider;
+use self::openai::OpenAiProvider;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRequest {
@@ -25,6 +27,10 @@ pub struct ProviderResponse {
 pub struct ProviderUsage {
     pub used: u64,
     pub limit: u64,
+    pub prompt_tokens: Option<u32>,
+    pub completion_tokens: Option<u32>,
+    pub total_tokens: Option<u32>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -41,13 +47,14 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn provider_names() -> &'static [&'static str] {
-    &["mock", "ollama"]
+    &["mock", "ollama", "openai"]
 }
 
 pub fn create_provider(name: &str, config: ProviderConfig) -> Result<Box<dyn Provider>> {
     match normalize_provider_name(name).as_ref() {
         "mock" => Ok(Box::new(MockProvider::new(config))),
         "ollama" => Ok(Box::new(OllamaProvider::new(config)?)),
+        "openai" => Ok(Box::new(OpenAiProvider::new(config)?)),
         _ => bail!("provider '{name}' is not available"),
     }
 }

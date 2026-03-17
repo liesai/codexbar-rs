@@ -16,6 +16,7 @@ La sortie est toujours renvoyée en JSON, y compris en cas d'erreur.
 
 - `mock` : provider local de démonstration qui simule un appel modèle et renvoie un echo enrichi ;
 - `ollama` : provider HTTP qui appelle une instance Ollama sur `/api/generate`.
+- `openai` : provider HTTP qui appelle l'API OpenAI sur `/chat/completions`.
 
 ## Prérequis
 
@@ -61,6 +62,27 @@ Le provider `ollama` peut aussi être configuré via :
 - `OLLAMA_MODEL`
 - `OLLAMA_BASE_URL`
 
+## OpenAI Provider
+
+Pour l'activer :
+
+```bash
+export OPENAI_API_KEY=your_api_key
+```
+
+Variables optionnelles :
+
+- `OPENAI_BASE_URL`
+- `OPENAI_MODEL`
+
+Exemple d'usage :
+
+```bash
+cargo run -- status --json
+```
+
+La sortie JSON de `status` inclut maintenant, selon le provider, les champs `prompt_tokens`, `completion_tokens`, `total_tokens` et `source`.
+
 ## Format de sortie
 
 Exemple de réponse réussie :
@@ -71,6 +93,26 @@ Exemple de réponse réussie :
   "data": {
     "output": "[model=mock-v1] tokens=3 echo=bonjour le monde",
     "provider": "mock"
+  }
+}
+```
+
+Exemple de statut provider avec champs de tokens :
+
+```json
+{
+  "ok": true,
+  "data": {
+    "providers": {
+      "openai": {
+        "used": 42,
+        "limit": 0,
+        "prompt_tokens": 12,
+        "completion_tokens": 30,
+        "total_tokens": 42,
+        "source": "openai/chat_completions"
+      }
+    }
   }
 }
 ```

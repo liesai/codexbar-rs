@@ -46,6 +46,10 @@ impl Provider for MockProvider {
         Ok(ProviderUsage {
             used: DEFAULT_USAGE_USED,
             limit: DEFAULT_USAGE_LIMIT,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            source: Some("mock".to_string()),
         })
     }
 }

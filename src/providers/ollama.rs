@@ -127,6 +127,10 @@ impl Provider for OllamaProvider {
         let default_usage = ProviderUsage {
             used: STATUS_FALLBACK_USED,
             limit: STATUS_FALLBACK_LIMIT,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            source: Some("ollama/status:fallback".to_string()),
         };
         let status_url = format!("{}/api/status", self.base_url);
 
@@ -149,6 +153,13 @@ impl Provider for OllamaProvider {
             default_usage.limit
         };
 
-        Ok(ProviderUsage { used, limit })
+        Ok(ProviderUsage {
+            used,
+            limit,
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+            source: Some("ollama/status".to_string()),
+        })
     }
 }

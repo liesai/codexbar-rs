@@ -1,0 +1,206 @@
+use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+
+use super::{Provider, ProviderConfig, ProviderRequest, ProviderResponse, ProviderUsage};
+
+const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_MODEL: &str = "gpt-4o-mini";
+const STATUS_PROBE_PROMPT: &str = "status";
+
+pub struct OpenAiProvider {
+    client: Client,
+    base_url: String,
+    api_key: Option<String>,
+    model: String,
+}
+
+impl OpenAiProvider {
+    pub fn new(config: ProviderConfig) -> Result<Self> {
+        let client = Client::builder()
+            .build()
+            .context("failed to build HTTP client for openai provider")?;
+
+        let base_url = config
+            .base_url
+            .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+            .trim_end_matches('/')
+            .to_string();
+
+        let model = config
+            .model
+            .or_else(|| std::env::var("OPENAI_MODEL").ok())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        Ok(Self {
+            client,
+            base_url,
+            api_key,
+            model,
+        })
+    }
+
+    fn endpoint(&self) -> String {
+        format!("{}/chat/completions", self.base_url)
+    }
+
+    async fn chat_completion(&self, prompt: &str) -> Result<OpenAiChatCompletionResponse> {
+        let api_key = match self.api_key.as_deref() {
+            Some(value) => value,
+            None => bail!("OPENAI_API_KEY is not set"),
+        };
+
+        let payload = OpenAiChatCompletionRequest {
+            model: &self.model,
+            messages: [OpenAiChatMessage {
+                role: "user",
+                content: prompt,
+            }],
+        };
+
+        let response = self
+            .client
+            .post(self.endpoint())
+            .bearer_auth(api_key)
+            .json(&payload)
+            .send()
+            .await
+            .context("failed to send request to openai")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| String::from("<failed to read error body>"));
+            bail!("openai request failed with status {}: {}", status, body);
+        }
+
+        response
+            .json::<OpenAiChatCompletionResponse>()
+            .await
+            .context("failed to decode openai response JSON")
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiChatCompletionRequest<'a> {
+    model: &'a str,
+    messages: [OpenAiChatMessage<'a>; 1],
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChatCompletionResponse {
+    #[serde(default)]
+    choices: Vec<OpenAiChoice>,
+    #[serde(default)]
+    usage: OpenAiUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChoice {
+    message: OpenAiMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiMessage {
+    #[serde(default)]
+    content: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct OpenAiUsage {
+    #[serde(default)]
+    prompt_tokens: Option<u32>,
+    #[serde(default)]
+    completion_tokens: Option<u32>,
+    #[serde(default)]
+    total_tokens: Option<u32>,
+}
+
+fn resolve_total_tokens(usage: &OpenAiUsage) -> Option<u32> {
+    usage.total_tokens.or_else(|| {
+        usage
+            .prompt_tokens
+            .zip(usage.completion_tokens)
+            .and_then(|(prompt, completion)| prompt.checked_add(completion))
+    })
+}
+
+#[async_trait]
+impl Provider for OpenAiProvider {
+    fn name(&self) -> &'static str {
+        "openai"
+    }
+
+    async fn generate(&self, request: ProviderRequest) -> Result<ProviderResponse> {
+        let body = self.chat_completion(&request.prompt).await?;
+        let output = body
+            .choices
+            .into_iter()
+            .next()
+            .map(|choice| choice.message.content)
+            .unwrap_or_default();
+
+        if output.trim().is_empty() {
+            bail!("openai response did not include content");
+        }
+
+        Ok(ProviderResponse {
+            provider: self.name().to_string(),
+            output,
+        })
+    }
+
+    async fn status(&self) -> Result<ProviderUsage> {
+        if self.api_key.is_none() {
+            return Ok(ProviderUsage {
+                used: 0,
+                limit: 0,
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                source: Some("openai/status:missing_api_key".to_string()),
+            });
+        }
+
+        let response = match self.chat_completion(STATUS_PROBE_PROMPT).await {
+            Ok(value) => value,
+            Err(_) => {
+                return Ok(ProviderUsage {
+                    used: 0,
+                    limit: 0,
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    total_tokens: None,
+                    source: Some("openai/status:error".to_string()),
+                });
+            }
+        };
+
+        let usage = response.usage;
+        let total_tokens = resolve_total_tokens(&usage);
+
+        Ok(ProviderUsage {
+            used: u64::from(total_tokens.unwrap_or(0)),
+            limit: 0,
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens,
+            source: Some("openai/chat_completions".to_string()),
+        })
+    }
+}
