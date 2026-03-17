@@ -1,3 +1,4 @@
+mod codex;
 mod mock;
 mod ollama;
 mod openai;
@@ -9,6 +10,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
+use self::codex::CodexProvider;
 use self::mock::MockProvider;
 use self::ollama::OllamaProvider;
 use self::openai::OpenAiProvider;
@@ -29,11 +31,12 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn provider_names() -> &'static [&'static str] {
-    &["mock", "ollama", "openai"]
+    &["codex", "mock", "ollama", "openai"]
 }
 
 pub fn create_provider(name: &str, config: ProviderConfig) -> Result<Box<dyn Provider>> {
     match normalize_provider_name(name).as_ref() {
+        "codex" => Ok(Box::new(CodexProvider::new(config))),
         "mock" => Ok(Box::new(MockProvider::new(config))),
         "ollama" => Ok(Box::new(OllamaProvider::new(config)?)),
         "openai" => Ok(Box::new(OpenAiProvider::new(config)?)),

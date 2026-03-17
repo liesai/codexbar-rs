@@ -7,6 +7,7 @@ The project currently provides:
 - provider status snapshots through `status`
 - source selection with `auto`, `api`, and `cli`
 - a real CLI-backed `ollama` status collector
+- a real CLI-backed `codex` status collector
 - OpenAI organization usage collection
 - persisted config and disk cache for status
 - local diagnostics through `doctor`
@@ -60,6 +61,7 @@ Current GUI scope:
 - Rust and Cargo
 - for `ollama` API usage: a reachable Ollama instance, defaulting to `http://127.0.0.1:11434`
 - for `ollama` CLI status collection: a working `ollama` binary in `PATH`
+- for `codex` CLI status collection: a working `codex` binary in `PATH`
 - for `openai` organization usage: `OPENAI_ADMIN_KEY` or `OPENAI_API_KEY`
 
 ## Build And Run
@@ -86,6 +88,7 @@ cargo run -- providers
 Current providers:
 
 - `mock`
+- `codex`
 - `ollama`
 - `openai`
 
@@ -127,6 +130,7 @@ Behavior by source:
 Current source support:
 
 - `mock`: local/mock status behavior
+- `codex`: real CLI collection via local Codex auth and app-server account status
 - `ollama`: API and real CLI collection
 - `openai`: API-backed status only; `--source cli` returns a degraded snapshot by design
 
@@ -157,9 +161,11 @@ cargo run -- doctor --source cli --json
 - resolved cache path
 - cache policy and selected source
 - cache presence and freshness
+- `codex` CLI availability
 - `ollama` CLI availability
 - whether OpenAI credentials are set, with an admin-key warning when relevant
 - provider capability summary
+- explicit warning that `codex --source api` is not implemented
 - explicit warning that `openai --source cli` is not implemented
 
 ## Backend Layer
@@ -180,6 +186,25 @@ The CLI is meant to stay as a thin adapter over this backend instead of being th
 ### Mock
 
 `mock` is a local demo provider. It returns predictable status data useful for development.
+
+### Codex
+
+`codex` supports:
+
+- CLI-backed account status collection
+
+CLI status collection uses:
+
+- `codex app-server --listen stdio://`
+- the local auth file at `$CODEX_HOME/auth.json`
+- fallback auth path: `~/.codex/auth.json`
+
+With `--source cli` or `--source auto`, the `codex` snapshot currently reports:
+
+- local Codex authentication availability
+- `updated_at` from the local auth file when available
+
+`codex --source api` is not implemented. The command returns a degraded snapshot intentionally rather than pretending API support exists.
 
 ### Ollama
 
@@ -290,6 +315,14 @@ Example status response:
         },
         "source": "cli",
         "health": "ok",
+        "stale": false
+      },
+      "codex": {
+        "provider": "codex",
+        "primary": {},
+        "source": "cli",
+        "health": "ok",
+        "updated_at": "2026-03-11T15:16:38.974908875Z",
         "stale": false
       },
       "openai": {

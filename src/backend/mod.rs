@@ -175,12 +175,13 @@ fn build_doctor_report(source_mode: SourceMode, app_config: &AppConfig) -> Backe
             ),
         },
         build_cache_state_check(cache_record.as_ref(), app_config.status.cache_ttl_seconds),
+        build_codex_cli_check(),
         build_ollama_cli_check(),
         build_openai_api_key_check(),
         DoctorCheck {
             name: "provider_capabilities".to_string(),
             status: DoctorStatus::Ok,
-            message: "mock=local, ollama=api+cli, openai=api".to_string(),
+            message: "codex=cli, mock=local, ollama=api+cli, openai=api".to_string(),
         },
     ];
 
@@ -189,6 +190,12 @@ fn build_doctor_report(source_mode: SourceMode, app_config: &AppConfig) -> Backe
             name: "openai_cli_support".to_string(),
             status: DoctorStatus::Warning,
             message: "openai --source cli is not implemented; only API-backed status is supported"
+                .to_string(),
+        });
+        checks.push(DoctorCheck {
+            name: "codex_api_support".to_string(),
+            status: DoctorStatus::Warning,
+            message: "codex --source api is not implemented; only CLI-backed status is supported"
                 .to_string(),
         });
     }
@@ -251,6 +258,26 @@ fn build_ollama_cli_check() -> DoctorCheck {
             name: "ollama_cli".to_string(),
             status: DoctorStatus::Warning,
             message: format!("ollama CLI not available: {error}"),
+        },
+    }
+}
+
+fn build_codex_cli_check() -> DoctorCheck {
+    match ProcessCommand::new("codex").arg("--version").output() {
+        Ok(output) if output.status.success() => DoctorCheck {
+            name: "codex_cli".to_string(),
+            status: DoctorStatus::Ok,
+            message: "codex CLI detected".to_string(),
+        },
+        Ok(output) => DoctorCheck {
+            name: "codex_cli".to_string(),
+            status: DoctorStatus::Warning,
+            message: format!("codex CLI returned non-zero status: {}", output.status),
+        },
+        Err(error) => DoctorCheck {
+            name: "codex_cli".to_string(),
+            status: DoctorStatus::Warning,
+            message: format!("codex CLI not available: {error}"),
         },
     }
 }
