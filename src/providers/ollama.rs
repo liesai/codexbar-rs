@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
+use std::process::Command;
 
 use super::{
     FetchSource, Provider, ProviderConfig, ProviderHealth, ProviderRequest, ProviderResponse,
@@ -49,20 +50,87 @@ impl OllamaProvider {
         format!("{}/api/generate", self.base_url)
     }
 
-    fn status_cli(&self) -> UsageSnapshot {
+    fn run_ollama_command(args: &[&str]) -> Result<String> {
+        let output = Command::new("ollama")
+            .args(args)
+            .output()
+            .with_context(|| format!("failed to execute ollama {}", args.join(" ")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let message = if stderr.is_empty() {
+                format!(
+                    "ollama {} exited with status {}",
+                    args.join(" "),
+                    output.status
+                )
+            } else {
+                format!("ollama {} failed: {}", args.join(" "), stderr)
+            };
+            bail!(message);
+        }
+
+        String::from_utf8(output.stdout).context("ollama command output was not valid UTF-8")
+    }
+
+    fn parse_ollama_table_count(raw: &str) -> Result<u64> {
+        let mut lines = raw.lines().map(str::trim).filter(|line| !line.is_empty());
+        let Some(_header) = lines.next() else {
+            bail!("ollama command returned no tabular output");
+        };
+
+        Ok(lines.count() as u64)
+    }
+
+    fn try_status_cli(&self) -> Result<UsageSnapshot> {
+        let active_raw = Self::run_ollama_command(&["ps"])?;
+        let active_models = Self::parse_ollama_table_count(&active_raw)?;
+
         let mut snapshot = UsageSnapshot::new(
             self.name(),
-            UsageWindow::new(None, None),
+            UsageWindow::new(Some(active_models), None),
             FetchSource::Cli,
-            ProviderHealth::Degraded,
+            ProviderHealth::Ok,
         );
-        snapshot.stale = true;
-        snapshot.error = Some("ollama CLI status strategy is not implemented".to_string());
-        snapshot
+
+        match Self::run_ollama_command(&["ls"]).and_then(|raw| Self::parse_ollama_table_count(&raw))
+        {
+            Ok(installed_models) => {
+                snapshot.secondary = Some(UsageWindow::new(Some(installed_models), None));
+            }
+            Err(error) => {
+                snapshot.health = ProviderHealth::Degraded;
+                snapshot.error = Some(format!(
+                    "collected active ollama models from CLI but failed to collect installed models: {error}"
+                ));
+            }
+        }
+
+        Ok(snapshot)
+    }
+
+    async fn status_cli(&self) -> Result<UsageSnapshot> {
+        match self.try_status_cli() {
+            Ok(snapshot) => Ok(snapshot),
+            Err(error) => {
+                let mut snapshot = UsageSnapshot::new(
+                    self.name(),
+                    UsageWindow::new(None, None),
+                    FetchSource::Cli,
+                    ProviderHealth::Degraded,
+                );
+                snapshot.stale = true;
+                snapshot.error = Some(error.to_string());
+                Ok(snapshot)
+            }
+        }
     }
 
     async fn status_auto(&self) -> Result<UsageSnapshot> {
-        self.status_api().await
+        match self.try_status_cli() {
+            Ok(snapshot) => Ok(snapshot),
+            Err(_) => self.status_api().await,
+        }
     }
 
     async fn status_api(&self) -> Result<UsageSnapshot> {
@@ -200,7 +268,37 @@ impl Provider for OllamaProvider {
         match request.source_mode {
             SourceMode::Auto => self.status_auto().await,
             SourceMode::Api => self.status_api().await,
-            SourceMode::Cli => Ok(self.status_cli()),
+            SourceMode::Cli => self.status_cli().await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OllamaProvider;
+
+    #[test]
+    fn parse_ollama_table_count_with_rows() {
+        let raw = "\
+NAME    ID    SIZE    PROCESSOR    CONTEXT    UNTIL
+llama3.2:latest    abc123    2.0 GB    100% GPU    8192    4m
+qwen2.5:latest    def456    6.0 GB    100% CPU    4096    1m
+";
+
+        let count = OllamaProvider::parse_ollama_table_count(raw).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn parse_ollama_table_count_with_only_header() {
+        let raw = "NAME    ID    SIZE    PROCESSOR    CONTEXT    UNTIL\n";
+        let count = OllamaProvider::parse_ollama_table_count(raw).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn parse_ollama_table_count_rejects_empty_output() {
+        let error = OllamaProvider::parse_ollama_table_count("").unwrap_err();
+        assert!(error.to_string().contains("no tabular output"));
     }
 }

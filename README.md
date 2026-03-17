@@ -89,7 +89,7 @@ cargo run -- status --json --source api
 cargo run -- status --json --source cli
 ```
 
-`auto` currently uses the provider default strategy. `cli` is implemented as an explicit strategy entry point, but `ollama` and `openai` still report a degraded snapshot until a real CLI-backed collector is added.
+`auto` currently uses the provider default strategy. `ollama` now has a real CLI-backed collector that reads `ollama ps` and enriches the snapshot with `ollama ls`. `openai --source cli` still reports a degraded snapshot until a real CLI collector is added.
 
 The `status` JSON output now exposes a richer usage snapshot for each provider, including `primary`, `health`, `source`, `stale`, and, when available, `prompt_tokens`, `completion_tokens`, and `total_tokens`.
 
@@ -114,14 +114,24 @@ Example provider status with usage snapshot fields:
   "ok": true,
   "data": {
     "providers": {
-      "openai": {
-        "error": "OPENAI_API_KEY is not set",
-        "health": "missing_credentials",
-        "provider": "openai",
+      "ollama": {
+        "health": "ok",
         "primary": {
           "used": 0
         },
-        "source": "unknown",
+        "provider": "ollama",
+        "secondary": {
+          "used": 11
+        },
+        "source": "cli",
+        "stale": false
+      },
+      "openai": {
+        "error": "openai CLI status strategy is not implemented",
+        "health": "degraded",
+        "provider": "openai",
+        "primary": {},
+        "source": "cli",
         "stale": true
       }
     }
