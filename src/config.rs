@@ -59,3 +59,7 @@ pub fn config_path() -> PathBuf {
         Err(_) => PathBuf::from(CONFIG_FILE),
     }
 }
+
+pub fn config_exists() -> bool {
+    config_path().exists()
+}

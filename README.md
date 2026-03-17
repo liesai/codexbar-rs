@@ -115,6 +115,16 @@ cargo run -- status --json --refresh
 cargo run -- status --json --no-cache
 ```
 
+Diagnostics:
+
+```bash
+cargo run -- config path
+cargo run -- doctor --json
+cargo run -- doctor --source cli --json
+```
+
+`doctor` reports resolved config/cache paths, cache state, `ollama` CLI availability, and the effective support level of each provider source.
+
 The `status` JSON output now exposes a richer usage snapshot for each provider, including `primary`, `health`, `source`, `stale`, and, when available, `prompt_tokens`, `completion_tokens`, and `total_tokens`.
 
 ## Output Format

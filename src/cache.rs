@@ -44,6 +44,10 @@ pub fn load_status_cache(source_mode: SourceMode) -> Result<Option<StatusCacheRe
     Ok(Some(record))
 }
 
+pub fn cache_path_for(source_mode: SourceMode) -> PathBuf {
+    cache_path(source_mode)
+}
+
 pub fn save_status_cache(record: &StatusCacheRecord) -> Result<()> {
     let path = cache_path(record.source_mode);
     if let Some(parent) = path.parent() {

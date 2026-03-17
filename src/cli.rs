@@ -38,6 +38,20 @@ pub enum Command {
     },
     /// List available providers.
     Providers,
+    /// Inspect resolved configuration paths.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    /// Run local diagnostics for config, cache, and provider support.
+    Doctor {
+        /// Serialize the doctor report as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Select the source mode to inspect.
+        #[arg(long, value_enum)]
+        source: Option<SourceMode>,
+    },
     /// Report provider consumption status.
     Status {
         /// Serialize the status map as JSON.
@@ -53,4 +67,10 @@ pub enum Command {
         #[arg(long)]
         no_cache: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Print the resolved config file path.
+    Path,
 }
