@@ -227,6 +227,14 @@ struct CodexAuthState {
     last_refresh: Option<String>,
 }
 
+#[derive(Debug, Default)]
+struct CodexTokenUsage {
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    total_tokens: Option<u32>,
+    updated_at: Option<String>,
+}
+
 fn resolve_auth_path() -> PathBuf {
     if let Ok(codex_home) = std::env::var("CODEX_HOME") {
         return PathBuf::from(codex_home).join("auth.json");
@@ -235,6 +243,17 @@ fn resolve_auth_path() -> PathBuf {
     match std::env::var("HOME") {
         Ok(home) => PathBuf::from(home).join(".codex").join("auth.json"),
         Err(_) => PathBuf::from(".codex").join("auth.json"),
+    }
+}
+
+fn resolve_sessions_root() -> PathBuf {
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        return PathBuf::from(codex_home).join("sessions");
+    }
+
+    match std::env::var("HOME") {
+        Ok(home) => PathBuf::from(home).join(".codex").join("sessions"),
+        Err(_) => PathBuf::from(".codex").join("sessions"),
     }
 }
 
@@ -308,6 +327,13 @@ fn snapshot_from_app_server_status(
         }
     }
 
+    if let Ok(Some(tokens)) = load_latest_session_token_usage() {
+        snapshot.prompt_tokens = tokens.prompt_tokens;
+        snapshot.completion_tokens = tokens.completion_tokens;
+        snapshot.total_tokens = tokens.total_tokens;
+        snapshot.updated_at = tokens.updated_at.or(snapshot.updated_at);
+    }
+
     if let Some(error) = &status.rate_limits_error {
         snapshot.health = ProviderHealth::Degraded;
         snapshot.error = Some(error.clone());
@@ -321,6 +347,97 @@ fn try_status_tty_snapshot() -> Result<CodexTtyStatusSnapshot> {
         auth_path: resolve_auth_path(),
     }
     .try_status_tty_snapshot()
+}
+
+fn load_latest_session_token_usage() -> Result<Option<CodexTokenUsage>> {
+    let mut latest_file = None;
+    collect_latest_jsonl_file(&resolve_sessions_root(), &mut latest_file)?;
+
+    let Some(path) = latest_file.map(|entry| entry.path) else {
+        return Ok(None);
+    };
+
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read codex session log {}", path.display()))?;
+    let mut latest_usage = None;
+
+    for line in raw.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let Ok(event) = serde_json::from_str::<CodexSessionEvent>(line) else {
+            continue;
+        };
+
+        if event.event_type != "event_msg" {
+            continue;
+        }
+
+        let Some(payload) = event.payload else {
+            continue;
+        };
+        if payload.payload_type != "token_count" {
+            continue;
+        }
+        let Some(info) = payload.info else {
+            continue;
+        };
+        let Some(total) = info.total_token_usage else {
+            continue;
+        };
+
+        let completion_tokens = total
+            .output_tokens
+            .unwrap_or(0)
+            .checked_add(total.reasoning_output_tokens.unwrap_or(0));
+
+        latest_usage = Some(CodexTokenUsage {
+            prompt_tokens: total
+                .input_tokens
+                .and_then(|value| u32::try_from(value).ok()),
+            completion_tokens: completion_tokens.and_then(|value| u32::try_from(value).ok()),
+            total_tokens: total
+                .total_tokens
+                .and_then(|value| u32::try_from(value).ok()),
+            updated_at: event.timestamp,
+        });
+    }
+
+    Ok(latest_usage)
+}
+
+fn collect_latest_jsonl_file(dir: &PathBuf, latest: &mut Option<LatestJsonlFile>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(dir)
+        .with_context(|| format!("failed to read session dir {}", dir.display()))?
+    {
+        let entry = entry.with_context(|| format!("failed to read entry in {}", dir.display()))?;
+        let path = entry.path();
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("failed to stat {}", path.display()))?;
+
+        if metadata.is_dir() {
+            collect_latest_jsonl_file(&path, latest)?;
+            continue;
+        }
+
+        if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        let modified = metadata.modified().ok();
+        let should_replace = match latest {
+            Some(current) => modified > current.modified,
+            None => true,
+        };
+
+        if should_replace {
+            *latest = Some(LatestJsonlFile { path, modified });
+        }
+    }
+
+    Ok(())
 }
 
 fn auth_mode_suffix(auth_state: &CodexAuthState) -> String {
@@ -596,6 +713,47 @@ struct CodexAppServerStatus {
 struct CodexTtyStatusSnapshot {
     primary: Option<UsageWindow>,
     secondary: Option<UsageWindow>,
+}
+
+struct LatestJsonlFile {
+    path: PathBuf,
+    modified: Option<std::time::SystemTime>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexSessionEvent {
+    #[serde(default)]
+    timestamp: Option<String>,
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(default)]
+    payload: Option<CodexSessionPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexSessionPayload {
+    #[serde(rename = "type")]
+    payload_type: String,
+    #[serde(default)]
+    info: Option<CodexSessionTokenInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexSessionTokenInfo {
+    #[serde(rename = "total_token_usage", default)]
+    total_token_usage: Option<CodexSessionTokenTotals>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexSessionTokenTotals {
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    output_tokens: Option<u64>,
+    #[serde(default)]
+    reasoning_output_tokens: Option<u64>,
+    #[serde(default)]
+    total_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

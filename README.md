@@ -2,6 +2,11 @@
 
 `codexbar-rs` is an asynchronous Rust CLI focused on provider status and usage collection, with JSON output, source-aware collection, persisted status configuration, and disk-backed caching.
 
+Inspired by the upstream macOS project `CodexBar`:
+
+- https://github.com/steipete/CodexBar
+- Codex provider notes: https://raw.githubusercontent.com/steipete/CodexBar/main/docs/codex.md
+
 The project currently provides:
 
 - provider status snapshots through `status`
@@ -210,6 +215,7 @@ With `--source cli` or `--source auto`, the `codex` snapshot currently reports:
 - auth mode from the local auth file
 - `primary` and `secondary` quota windows from `account/rateLimits/read` when available
 - `primary` and `secondary` quota windows from `/status` as percent-based usage when rate limits are only visible in the TUI
+- token counters from the latest local Codex session log when available
 - `updated_at` from the local auth file when available
 
 Current limitation:
@@ -332,8 +338,10 @@ Example status response:
       "codex": {
         "account": "user@example.com",
         "auth_mode": "chatgpt",
+        "completion_tokens": 1497,
         "health": "ok",
         "plan": "plus",
+        "prompt_tokens": 114771,
         "provider": "codex",
         "primary": {
           "limit": 100,
@@ -346,6 +354,7 @@ Example status response:
           "used": 67
         },
         "source": "cli",
+        "total_tokens": 116314,
         "updated_at": "2026-03-11T15:16:38.974908875Z",
         "stale": false
       },
