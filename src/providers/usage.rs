@@ -81,6 +81,12 @@ pub struct UsageSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secondary: Option<UsageWindow>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_tokens: Option<u32>,
@@ -106,6 +112,9 @@ impl UsageSnapshot {
             provider: provider.into(),
             primary,
             secondary: None,
+            account: None,
+            plan: None,
+            auth_mode: None,
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: None,

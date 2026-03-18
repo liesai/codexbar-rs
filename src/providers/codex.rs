@@ -181,9 +181,15 @@ fn snapshot_from_app_server_status(
         ProviderHealth::Ok,
     );
     snapshot.updated_at = auth_state.last_refresh.clone();
+    snapshot.auth_mode = auth_state.auth_mode.clone();
 
     match status.account.as_ref() {
-        Some(result) if result.account.is_some() => {}
+        Some(result) if result.account.is_some() => {
+            if let Some(account) = result.account.as_ref() {
+                snapshot.account = account.email.clone();
+                snapshot.plan = account.plan_type.clone();
+            }
+        }
         _ => {
             snapshot.health = ProviderHealth::MissingCredentials;
             snapshot.stale = true;
@@ -373,6 +379,8 @@ struct CodexAppServerStatus {
 struct CodexAccount {
     #[serde(rename = "type")]
     account_type: String,
+    #[serde(default)]
+    email: Option<String>,
     #[serde(rename = "planType", default)]
     plan_type: Option<String>,
 }

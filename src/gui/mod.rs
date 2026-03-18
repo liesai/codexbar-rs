@@ -91,6 +91,15 @@ impl CodexBarGuiApp {
                 ui.label(format!("health: {:?}", snapshot.health));
                 ui.label(format!("source: {:?}", snapshot.source));
                 ui.label(format!("stale: {}", snapshot.stale));
+                if let Some(account) = &snapshot.account {
+                    ui.label(format!("account: {account}"));
+                }
+                if let Some(plan) = &snapshot.plan {
+                    ui.label(format!("plan: {plan}"));
+                }
+                if let Some(auth_mode) = &snapshot.auth_mode {
+                    ui.label(format!("auth_mode: {auth_mode}"));
+                }
 
                 if let Some(used) = snapshot.primary.used {
                     ui.label(format!("primary.used: {used}"));

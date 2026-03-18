@@ -203,6 +203,9 @@ CLI status collection uses:
 With `--source cli` or `--source auto`, the `codex` snapshot currently reports:
 
 - local Codex authentication availability
+- account email when exposed by `account/read`
+- plan type when exposed by `account/read`
+- auth mode from the local auth file
 - `primary` and `secondary` quota windows when `account/rateLimits/read` is available
 - `updated_at` from the local auth file when available
 
@@ -320,6 +323,9 @@ Example status response:
         "stale": false
       },
       "codex": {
+        "account": "user@example.com",
+        "auth_mode": "chatgpt",
+        "plan": "plus",
         "provider": "codex",
         "primary": {},
         "source": "cli",
