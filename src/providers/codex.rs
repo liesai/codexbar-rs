@@ -1,11 +1,16 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use super::{
     FetchSource, Provider, ProviderConfig, ProviderHealth, SourceMode, StatusRequest,
@@ -75,6 +80,87 @@ impl CodexProvider {
                 Ok(snapshot)
             }
         }
+    }
+
+    fn try_status_tty_snapshot(&self) -> Result<CodexTtyStatusSnapshot> {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 30,
+                cols: 100,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .context("failed to open PTY for codex")?;
+
+        let cmd = CommandBuilder::new("codex");
+        let mut cmd = cmd;
+        cmd.arg("--no-alt-screen");
+
+        let mut child = pair
+            .slave
+            .spawn_command(cmd)
+            .context("failed to spawn codex in PTY mode")?;
+        drop(pair.slave);
+
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .context("failed to clone codex PTY reader")?;
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let output_clone = Arc::clone(&output);
+
+        let reader_thread = thread::spawn(move || {
+            let mut reader = reader;
+            let mut buffer = [0_u8; 4096];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        if let Ok(mut output) = output_clone.lock() {
+                            output.extend_from_slice(&buffer[..read]);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let mut writer = pair
+            .master
+            .take_writer()
+            .context("failed to open codex PTY writer")?;
+
+        thread::sleep(Duration::from_secs(7));
+        writer
+            .write_all(b"/status\r")
+            .context("failed to write /status to codex PTY")?;
+        writer
+            .flush()
+            .context("failed to flush /status to codex PTY")?;
+
+        thread::sleep(Duration::from_secs(1));
+        writer
+            .write_all(b"\r")
+            .context("failed to confirm /status in codex PTY")?;
+        writer
+            .flush()
+            .context("failed to flush confirm key to codex PTY")?;
+
+        thread::sleep(Duration::from_secs(6));
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(writer);
+        let _ = reader_thread.join();
+
+        let raw = String::from_utf8_lossy(
+            &output
+                .lock()
+                .map_err(|_| anyhow::anyhow!("failed to lock codex PTY output buffer"))?,
+        )
+        .to_string();
+
+        parse_tty_status_snapshot(&raw)
     }
 
     fn read_account_via_app_server(&self) -> Result<CodexAppServerStatus> {
@@ -211,12 +297,30 @@ fn snapshot_from_app_server_status(
             .map(rate_limit_window_to_usage_window);
     }
 
+    if snapshot.primary.used.is_none() {
+        if let Ok(tty_status) = try_status_tty_snapshot() {
+            if let Some(primary) = tty_status.primary {
+                snapshot.primary = primary;
+            }
+            if let Some(secondary) = tty_status.secondary {
+                snapshot.secondary = Some(secondary);
+            }
+        }
+    }
+
     if let Some(error) = &status.rate_limits_error {
         snapshot.health = ProviderHealth::Degraded;
         snapshot.error = Some(error.clone());
     }
 
     snapshot
+}
+
+fn try_status_tty_snapshot() -> Result<CodexTtyStatusSnapshot> {
+    CodexProvider {
+        auth_path: resolve_auth_path(),
+    }
+    .try_status_tty_snapshot()
 }
 
 fn auth_mode_suffix(auth_state: &CodexAuthState) -> String {
@@ -334,6 +438,120 @@ fn rate_limit_window_to_usage_window(window: &CodexRateLimitWindow) -> UsageWind
     usage_window
 }
 
+fn parse_tty_status_snapshot(raw: &str) -> Result<CodexTtyStatusSnapshot> {
+    let sanitized = strip_ansi(raw);
+    let lines: Vec<&str> = sanitized.lines().map(str::trim).collect();
+
+    let mut primary = None;
+    let mut secondary = None;
+
+    for (index, line) in lines.iter().enumerate() {
+        let next_reset_line = find_next_reset_line(&lines, index);
+        if let Some(window) = parse_tty_window_line(line, next_reset_line) {
+            if line.contains("5h limit:") {
+                primary = Some(window);
+            } else if line.contains("Weekly limit:") {
+                secondary = Some(window);
+            }
+        }
+    }
+
+    if primary.is_none() && secondary.is_none() {
+        bail!("codex /status did not expose rate limit windows");
+    }
+
+    Ok(CodexTtyStatusSnapshot { primary, secondary })
+}
+
+fn find_next_reset_line<'a>(lines: &'a [&'a str], index: usize) -> Option<&'a str> {
+    for line in lines.iter().skip(index + 1).take(4) {
+        if line.is_empty() {
+            continue;
+        }
+        if line.contains("limit:") {
+            break;
+        }
+        if line.contains("(resets ") {
+            return Some(*line);
+        }
+    }
+
+    None
+}
+
+fn parse_tty_window_line(line: &str, next_line: Option<&str>) -> Option<UsageWindow> {
+    let left_marker = "% left";
+    let left_index = line.find(left_marker)?;
+    let left_digits = line[..left_index]
+        .chars()
+        .rev()
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    let remaining = left_digits.parse::<u64>().ok()?;
+    let used = 100_u64.saturating_sub(remaining);
+
+    let mut window = UsageWindow::new(Some(used), Some(100));
+    if let Some(next_line) = next_line {
+        if let Some(start) = next_line.find("(resets ") {
+            let resets = next_line[start + 8..]
+                .trim()
+                .trim_matches('│')
+                .trim()
+                .trim_end_matches(')')
+                .trim()
+                .to_string();
+            if !resets.is_empty() {
+                window.resets_at = Some(resets);
+            }
+        }
+    }
+
+    Some(window)
+}
+
+fn strip_ansi(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '\u{7}' {
+                            break;
+                        }
+                        if next == '\\' {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        if ch != '\r' {
+            output.push(ch);
+        }
+    }
+
+    output
+}
+
 #[derive(Debug, Deserialize)]
 struct CodexAuthFile {
     #[serde(default)]
@@ -372,6 +590,12 @@ struct CodexAppServerStatus {
     rate_limits: Option<CodexRateLimitsReadResult>,
     #[serde(default)]
     rate_limits_error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct CodexTtyStatusSnapshot {
+    primary: Option<UsageWindow>,
+    secondary: Option<UsageWindow>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -433,7 +657,9 @@ impl Provider for CodexProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_app_server_status_response, select_codex_rate_limit};
+    use super::{
+        parse_app_server_status_response, parse_tty_status_snapshot, select_codex_rate_limit,
+    };
 
     #[test]
     fn parse_account_read_response_extracts_account() {
@@ -474,6 +700,35 @@ mod tests {
         assert_eq!(
             snapshot.secondary.as_ref().map(|value| value.used_percent),
             Some(7)
+        );
+    }
+
+    #[test]
+    fn parse_tty_status_snapshot_extracts_windows() {
+        let raw = r#"
+│  5h limit:             [███████████████████░] 95% left
+│                        (resets 02:00 on 18 Mar)
+│  Weekly limit:         [███████░░░░░░░░░░░░░] 33% left
+│                        (resets 13:00 on 18 Mar)
+"#;
+
+        let snapshot = parse_tty_status_snapshot(raw).unwrap();
+        assert_eq!(snapshot.primary.as_ref().and_then(|w| w.used), Some(5));
+        assert_eq!(snapshot.primary.as_ref().and_then(|w| w.limit), Some(100));
+        assert_eq!(
+            snapshot
+                .primary
+                .as_ref()
+                .and_then(|w| w.resets_at.as_deref()),
+            Some("02:00 on 18 Mar")
+        );
+        assert_eq!(snapshot.secondary.as_ref().and_then(|w| w.used), Some(67));
+        assert_eq!(
+            snapshot
+                .secondary
+                .as_ref()
+                .and_then(|w| w.resets_at.as_deref()),
+            Some("13:00 on 18 Mar")
         );
     }
 }

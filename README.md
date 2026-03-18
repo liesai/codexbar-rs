@@ -192,13 +192,15 @@ The CLI is meant to stay as a thin adapter over this backend instead of being th
 `codex` supports:
 
 - CLI-backed account status collection
-- CLI-backed rate limit collection when exposed by the local Codex app-server
+- CLI-backed rate limit collection via app-server when available
+- CLI-backed `/status` fallback parsing for visible 5h and weekly quota windows
 
 CLI status collection uses:
 
 - `codex app-server --listen stdio://`
 - the local auth file at `$CODEX_HOME/auth.json`
 - fallback auth path: `~/.codex/auth.json`
+- a PTY fallback that runs `codex --no-alt-screen` and parses `/status`
 
 With `--source cli` or `--source auto`, the `codex` snapshot currently reports:
 
@@ -206,8 +208,13 @@ With `--source cli` or `--source auto`, the `codex` snapshot currently reports:
 - account email when exposed by `account/read`
 - plan type when exposed by `account/read`
 - auth mode from the local auth file
-- `primary` and `secondary` quota windows when `account/rateLimits/read` is available
+- `primary` and `secondary` quota windows from `account/rateLimits/read` when available
+- `primary` and `secondary` quota windows from `/status` as percent-based usage when rate limits are only visible in the TUI
 - `updated_at` from the local auth file when available
+
+Current limitation:
+
+- local Codex `/status` exposes quota percentages, but not explicit prompt/completion/total token counts on this machine, so token fields remain unset
 
 `codex --source api` is not implemented. The command returns a degraded snapshot intentionally rather than pretending API support exists.
 
@@ -325,11 +332,20 @@ Example status response:
       "codex": {
         "account": "user@example.com",
         "auth_mode": "chatgpt",
+        "health": "ok",
         "plan": "plus",
         "provider": "codex",
-        "primary": {},
+        "primary": {
+          "limit": 100,
+          "remaining": 93,
+          "used": 7
+        },
+        "secondary": {
+          "limit": 100,
+          "remaining": 33,
+          "used": 67
+        },
         "source": "cli",
-        "health": "ok",
         "updated_at": "2026-03-11T15:16:38.974908875Z",
         "stale": false
       },
