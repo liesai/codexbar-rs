@@ -192,6 +192,7 @@ The CLI is meant to stay as a thin adapter over this backend instead of being th
 `codex` supports:
 
 - CLI-backed account status collection
+- CLI-backed rate limit collection when exposed by the local Codex app-server
 
 CLI status collection uses:
 
@@ -202,6 +203,7 @@ CLI status collection uses:
 With `--source cli` or `--source auto`, the `codex` snapshot currently reports:
 
 - local Codex authentication availability
+- `primary` and `secondary` quota windows when `account/rateLimits/read` is available
 - `updated_at` from the local auth file when available
 
 `codex --source api` is not implemented. The command returns a degraded snapshot intentionally rather than pretending API support exists.

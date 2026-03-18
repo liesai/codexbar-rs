@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -57,13 +58,17 @@ impl CodexProvider {
         }
 
         match self.read_account_via_app_server() {
-            Ok(account) => Ok(snapshot_from_account(
+            Ok(status) => Ok(snapshot_from_app_server_status(
                 self.name(),
                 &auth_state,
-                Some(&account),
+                &status,
             )),
             Err(error) => {
-                let mut snapshot = snapshot_from_account(self.name(), &auth_state, None);
+                let mut snapshot = snapshot_from_app_server_status(
+                    self.name(),
+                    &auth_state,
+                    &CodexAppServerStatus::default(),
+                );
                 snapshot.health = ProviderHealth::Degraded;
                 snapshot.stale = true;
                 snapshot.error = Some(format!("failed to query codex app-server: {error}"));
@@ -72,7 +77,7 @@ impl CodexProvider {
         }
     }
 
-    fn read_account_via_app_server(&self) -> Result<CodexAccountReadResult> {
+    fn read_account_via_app_server(&self) -> Result<CodexAppServerStatus> {
         let initialize = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -112,7 +117,7 @@ impl CodexProvider {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         if !stdout.trim().is_empty() {
-            return parse_account_read_response(&stdout);
+            return parse_app_server_status_response(&stdout);
         }
 
         if !output.status.success() {
@@ -164,10 +169,10 @@ fn load_auth_state(path: &PathBuf) -> Result<CodexAuthState> {
     })
 }
 
-fn snapshot_from_account(
+fn snapshot_from_app_server_status(
     provider_name: &str,
     auth_state: &CodexAuthState,
-    account: Option<&CodexAccountReadResult>,
+    status: &CodexAppServerStatus,
 ) -> UsageSnapshot {
     let mut snapshot = UsageSnapshot::new(
         provider_name,
@@ -177,10 +182,8 @@ fn snapshot_from_account(
     );
     snapshot.updated_at = auth_state.last_refresh.clone();
 
-    match account {
-        Some(result) if result.account.is_some() => {
-            let _ = result.requires_openai_auth;
-        }
+    match status.account.as_ref() {
+        Some(result) if result.account.is_some() => {}
         _ => {
             snapshot.health = ProviderHealth::MissingCredentials;
             snapshot.stale = true;
@@ -188,11 +191,28 @@ fn snapshot_from_account(
                 "codex account is not available via app-server{}",
                 auth_mode_suffix(auth_state)
             ));
+            return snapshot;
         }
+    }
+
+    if let Some(rate_limit) = select_codex_rate_limit(status.rate_limits.as_ref()) {
+        if let Some(primary) = rate_limit.primary.as_ref() {
+            snapshot.primary = rate_limit_window_to_usage_window(primary);
+        }
+        snapshot.secondary = rate_limit
+            .secondary
+            .as_ref()
+            .map(rate_limit_window_to_usage_window);
+    }
+
+    if let Some(error) = &status.rate_limits_error {
+        snapshot.health = ProviderHealth::Degraded;
+        snapshot.error = Some(error.clone());
     }
 
     snapshot
 }
+
 fn auth_mode_suffix(auth_state: &CodexAuthState) -> String {
     auth_state
         .auth_mode
@@ -201,31 +221,111 @@ fn auth_mode_suffix(auth_state: &CodexAuthState) -> String {
         .unwrap_or_default()
 }
 
-fn parse_account_read_response(stdout: &str) -> Result<CodexAccountReadResult> {
+fn parse_app_server_status_response(stdout: &str) -> Result<CodexAppServerStatus> {
+    let mut status = CodexAppServerStatus::default();
+
     for line in stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
-        let response = serde_json::from_str::<JsonRpcResponse<CodexAccountReadResult>>(line)
+        let response = serde_json::from_str::<JsonRpcResponse<Value>>(line)
             .with_context(|| "failed to decode codex app-server JSON-RPC response")?;
 
-        if response.id == Some(2) {
-            if let Some(error) = response.error {
-                bail!(
-                    "codex account/read returned error {}: {}",
-                    error.code,
-                    error.message
+        match response.id {
+            Some(2) => {
+                if let Some(error) = response.error {
+                    bail!(
+                        "codex account/read returned error {}: {}",
+                        error.code,
+                        error.message
+                    );
+                }
+
+                status.account = Some(
+                    serde_json::from_value(
+                        response
+                            .result
+                            .context("codex account/read returned no result payload")?,
+                    )
+                    .context("failed to decode codex account/read result payload")?,
                 );
             }
+            Some(3) => {
+                if let Some(error) = response.error {
+                    status.rate_limits_error = Some(format!(
+                        "codex rateLimits/read returned error {}: {}",
+                        error.code, error.message
+                    ));
+                    continue;
+                }
 
-            return response
-                .result
-                .context("codex account/read returned no result");
+                if let Some(result) = response.result {
+                    status.rate_limits = Some(
+                        serde_json::from_value(result)
+                            .context("failed to decode codex rateLimits/read result payload")?,
+                    );
+                }
+            }
+            _ => {}
         }
     }
 
-    bail!("codex account/read returned no response")
+    if status.account.is_none() {
+        bail!("codex account/read returned no response");
+    }
+
+    Ok(status)
+}
+
+fn select_codex_rate_limit(
+    rate_limits: Option<&CodexRateLimitsReadResult>,
+) -> Option<&CodexRateLimitSnapshot> {
+    let rate_limits = rate_limits?;
+
+    if let Some(by_limit_id) = rate_limits.rate_limits_by_limit_id.as_ref() {
+        if let Some(snapshot) = by_limit_id.get("codex") {
+            return Some(snapshot);
+        }
+
+        if let Some(snapshot) = by_limit_id
+            .iter()
+            .find(|(limit_id, _)| limit_id.eq_ignore_ascii_case("codex"))
+            .map(|(_, snapshot)| snapshot)
+        {
+            return Some(snapshot);
+        }
+    }
+
+    match rate_limits.rate_limits.as_ref() {
+        Some(snapshot) if is_codex_limit(snapshot) || snapshot_has_usage(snapshot) => {
+            Some(snapshot)
+        }
+        _ => None,
+    }
+}
+
+fn is_codex_limit(snapshot: &CodexRateLimitSnapshot) -> bool {
+    snapshot
+        .limit_id
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("codex"))
+        || snapshot
+            .limit_name
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("codex"))
+}
+
+fn snapshot_has_usage(snapshot: &CodexRateLimitSnapshot) -> bool {
+    snapshot.primary.is_some() || snapshot.secondary.is_some()
+}
+
+fn rate_limit_window_to_usage_window(window: &CodexRateLimitWindow) -> UsageWindow {
+    let used = Some(u64::from(window.used_percent));
+    let limit = Some(100);
+    let mut usage_window = UsageWindow::new(used, limit);
+    usage_window.resets_at = window.resets_at.map(|value| value.to_string());
+    usage_window
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,11 +350,22 @@ struct JsonRpcError {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct CodexAccountReadResult {
     #[serde(default)]
     account: Option<CodexAccount>,
     #[serde(rename = "requiresOpenaiAuth", default)]
     requires_openai_auth: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CodexAppServerStatus {
+    #[serde(default)]
+    account: Option<CodexAccountReadResult>,
+    #[serde(default)]
+    rate_limits: Option<CodexRateLimitsReadResult>,
+    #[serde(default)]
+    rate_limits_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +375,37 @@ struct CodexAccount {
     account_type: String,
     #[serde(rename = "planType", default)]
     plan_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexRateLimitsReadResult {
+    #[serde(rename = "rateLimits", default)]
+    rate_limits: Option<CodexRateLimitSnapshot>,
+    #[serde(rename = "rateLimitsByLimitId", default)]
+    rate_limits_by_limit_id: Option<BTreeMap<String, CodexRateLimitSnapshot>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexRateLimitSnapshot {
+    #[serde(rename = "limitId", default)]
+    limit_id: Option<String>,
+    #[serde(rename = "limitName", default)]
+    limit_name: Option<String>,
+    #[serde(default)]
+    primary: Option<CodexRateLimitWindow>,
+    #[serde(default)]
+    secondary: Option<CodexRateLimitWindow>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CodexRateLimitWindow {
+    #[serde(rename = "usedPercent")]
+    used_percent: u32,
+    #[serde(rename = "resetsAt", default)]
+    resets_at: Option<u64>,
+    #[serde(rename = "windowDurationMins", default)]
+    window_duration_mins: Option<u64>,
 }
 
 #[async_trait]
@@ -283,7 +425,7 @@ impl Provider for CodexProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_account_read_response;
+    use super::{parse_app_server_status_response, select_codex_rate_limit};
 
     #[test]
     fn parse_account_read_response_extracts_account() {
@@ -291,7 +433,8 @@ mod tests {
 {"id":2,"result":{"account":{"type":"chatgpt","email":"user@example.com","planType":"plus"},"requiresOpenaiAuth":true}}
 "#;
 
-        let result = parse_account_read_response(raw).unwrap();
+        let status = parse_app_server_status_response(raw).unwrap();
+        let result = status.account.unwrap();
         let account = result.account.unwrap();
         assert_eq!(account.account_type, "chatgpt");
         assert_eq!(account.plan_type.as_deref(), Some("plus"));
@@ -302,7 +445,27 @@ mod tests {
     fn parse_account_read_response_rejects_missing_result() {
         let raw =
             r#"{"id":1,"result":{"userAgent":"x","platformFamily":"unix","platformOs":"linux"}}"#;
-        let error = parse_account_read_response(raw).unwrap_err();
+        let error = parse_app_server_status_response(raw).unwrap_err();
         assert!(error.to_string().contains("no response"));
+    }
+
+    #[test]
+    fn parse_app_server_status_response_extracts_rate_limits() {
+        let raw = r#"{"id":1,"result":{"userAgent":"x","platformFamily":"unix","platformOs":"linux"}}
+{"id":2,"result":{"account":{"type":"chatgpt","email":"user@example.com","planType":"plus"},"requiresOpenaiAuth":true}}
+{"id":3,"result":{"rateLimits":{"limitId":"other","primary":{"usedPercent":21,"resetsAt":1774000000}},"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":42,"resetsAt":1775000000},"secondary":{"usedPercent":7,"resetsAt":1775003600}}}}}
+"#;
+
+        let status = parse_app_server_status_response(raw).unwrap();
+        let snapshot = select_codex_rate_limit(status.rate_limits.as_ref()).unwrap();
+        assert_eq!(snapshot.limit_id.as_deref(), Some("codex"));
+        assert_eq!(
+            snapshot.primary.as_ref().map(|value| value.used_percent),
+            Some(42)
+        );
+        assert_eq!(
+            snapshot.secondary.as_ref().map(|value| value.used_percent),
+            Some(7)
+        );
     }
 }
